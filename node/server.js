@@ -5,10 +5,10 @@ const video = 'test_video1.mp4'
 const app = express();
 app.use(express.json());
 
-const pbv = new PBVision('API_KEY', { useProdServer: true });
+const pbv = new PBVision(process.env.PBVISION_API_KEY, { useProdServer: true });
 
-// 1. Tell PB Vision where to send the stats
-await pbv.setWebhook('https://your-ngrok-url.ngrok-free.app/webhook');
+// 1. Tell PB Vision where to send the stats- Update every time you start the server
+await pbv.setWebhook('https://investable-columelliform-jonelle.ngrok-free.dev/webhook');
 
 // 2. Create the endpoint to receive the stats
 app.post('/webhook', (req, res) => {

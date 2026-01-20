@@ -10,7 +10,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
     "@pbvision/partner-sdk": "^0.1.13",
     "dotenv": "^17.2.3",
