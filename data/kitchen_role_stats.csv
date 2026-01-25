@@ -1,0 +1,17 @@
+vid,player_id,role,perspective,kitchen_arrivals,opportunities,kitchen_pct
+nwbkyf7yqp0b,0,serving,oneself,4,5,0.8
+nwbkyf7yqp0b,0,serving,partner,9,9,1.0
+nwbkyf7yqp0b,0,returning,oneself,5,5,1.0
+nwbkyf7yqp0b,0,returning,partner,7,7,1.0
+nwbkyf7yqp0b,1,serving,oneself,9,9,1.0
+nwbkyf7yqp0b,1,serving,partner,4,5,0.8
+nwbkyf7yqp0b,1,returning,oneself,7,7,1.0
+nwbkyf7yqp0b,1,returning,partner,5,5,1.0
+nwbkyf7yqp0b,2,serving,oneself,3,4,0.75
+nwbkyf7yqp0b,2,serving,partner,5,7,0.714
+nwbkyf7yqp0b,2,returning,oneself,7,7,1.0
+nwbkyf7yqp0b,2,returning,partner,7,7,1.0
+nwbkyf7yqp0b,3,serving,oneself,5,7,0.714
+nwbkyf7yqp0b,3,serving,partner,3,4,0.75
+nwbkyf7yqp0b,3,returning,oneself,7,7,1.0
+nwbkyf7yqp0b,3,returning,partner,7,7,1.0

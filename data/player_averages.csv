@@ -1,0 +1,5 @@
+vid,player_id,serve_depth_avg,serve_height_avg,return_depth_avg,return_height_avg,return_kitchen_pct,serve_kitchen_pct,player_name,serve_depth_grade,serve_height_grade,serve_kitchen_grade,return_depth_grade,return_height_grade,return_kitchen_grade
+nwbkyf7yqp0b,0,39.088,4.2531,35.002,4.849,1.0,0.8,,Beginner,Beginner,Advanced,Beginner,Beginner,Pro
+nwbkyf7yqp0b,1,40.173153846153845,5.109999999999999,39.88585714285715,6.024142857142857,1.0,1.0,,Beginner,Beginner,Pro,Beginner,Beginner,Pro
+nwbkyf7yqp0b,2,41.930142857142854,3.9487142857142854,35.235,5.1739,1.0,0.75,,Beginner,Beginner,Advanced,Beginner,Beginner,Pro
+nwbkyf7yqp0b,3,41.8137,4.4223,43.31727272727273,6.189909090909091,1.0,0.7142857142857143,,Beginner,Beginner,Advanced,Beginner,Beginner,Pro

@@ -6,14 +6,6 @@ import csv
 import sys
 from pathlib import Path
 
-# Level thresholds for kitchen coverage skill bands.
-KITCHEN_BANDS = [
-    ("Beginner", 0.0, 0.4),
-    ("Intermediate", 0.4, 0.6),
-    ("Advanced", 0.6, 0.8),
-    ("Pro", 0.8, float('inf'))
-]
-
 SERVE_INDEX = 0
 RETURN_INDEX = 1
 
@@ -27,14 +19,6 @@ def find_object(data_list, key):
 
 def safe_ratio(n, d):
     return round(n / d, 3) if d else None
-
-def skill_band(value, thresholds):
-    if value is None:
-        return None
-    for label, low, high in thresholds:
-        if low <= value < high:
-            return label
-    return thresholds[-1][0]
 
 def load_json_lines(file_path):
     """Load JSONL file with validation."""
@@ -61,52 +45,54 @@ def load_json_lines(file_path):
     
     return data_list
 
-def extract_summary_metrics(stats, vid, output_dir):
-    """Extract and write summary metrics CSV."""
-    if not stats:
-        print("WARNING: Summary stats not found. Skipping summary metrics CSV.")
-        return 0
-    
+def extract_kitchen_role_stats(stats, vid, output_dir):
     players = stats.get("players", [])
-    if not players:
-        print("WARNING: No players found in stats")
-        return 0
-    
     rows = []
-    for idx, player in enumerate(players):
-        kitchen_arrival_percentage = player.get("kitchen_arrival_percentage", {})
-        serving = kitchen_arrival_percentage.get("serving", {}).get("oneself", {})
-        returning = kitchen_arrival_percentage.get("returning", {}).get("oneself", {})
-        
-        # Validate required fields
-        if serving.get("denominator") is None and returning.get("denominator") is None:
-            print(f"WARNING: Player {idx} has no kitchen coverage data (both serve and return missing)")
-            continue
-        
-        serve_pct = safe_ratio(serving.get("numerator"), serving.get("denominator"))
-        return_pct = safe_ratio(returning.get("numerator"), returning.get("denominator"))
-        
-        rows.append({
-            "vid": vid,
-            "player_id": idx,
-            "serve_kitchen_coverage": serve_pct,
-            "serve_kitchen_level": skill_band(serve_pct, KITCHEN_BANDS),
-            "return_kitchen_coverage": return_pct,
-            "return_kitchen_level": skill_band(return_pct, KITCHEN_BANDS)
-        })
-    
-    if not rows:
-        print("WARNING: No valid player data extracted")
-        return 0
-    
-    csv_path = output_dir / "summary_metrics.csv"
+
+    for player_id, player in enumerate(players):
+        kap = player.get("kitchen_arrival_percentage", {})
+
+        for role in ("serving", "returning"):
+            role_data = kap.get(role, {})
+
+            for perspective in ("oneself", "partner"):
+                ctx = role_data.get(perspective, {})
+
+                num = ctx.get("numerator")
+                den = ctx.get("denominator")
+
+                pct = safe_ratio(num, den) if den else None
+
+                rows.append({
+                    "vid": vid,
+                    "player_id": player_id,
+                    "role": role,
+                    "perspective": perspective,
+                    "kitchen_arrivals": num,
+                    "opportunities": den,
+                    "kitchen_pct": pct,
+                })
+
+    csv_path = output_dir / "kitchen_role_stats.csv"
     with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["vid", "player_id", "serve_kitchen_coverage", "serve_kitchen_level", "return_kitchen_coverage", "return_kitchen_level"])
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "vid",
+                "player_id",
+                "role",
+                "perspective",
+                "kitchen_arrivals",
+                "opportunities",
+                "kitchen_pct",
+            ],
+        )
         writer.writeheader()
         writer.writerows(rows)
-    
+
     print(f"Generated {csv_path} ({len(rows)} rows)")
     return len(rows)
+
 
 def extract_shot_level_data(insights, vid, output_dir):
     """Extract and write shot-level data CSV."""
@@ -168,7 +154,7 @@ def extract_shot_level_data(insights, vid, output_dir):
     
     csv_path = output_dir / "shot_level_data.csv"
     with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["vid", "rally_idx", "shot_idx", "player_id", "shot_type", "shot_role", "start_ms", "end_ms", "depth", "height_over_net"])
+        writer = csv.DictWriter(f, fieldnames=["vid", "rally_idx", "shot_idx","player_id", "shot_type", "shot_role", "start_ms", "end_ms", "depth", "height_over_net"])
         writer.writeheader()
         writer.writerows(shot_rows)
     
@@ -177,8 +163,8 @@ def extract_shot_level_data(insights, vid, output_dir):
 
 def main():
     """Main entry point."""
-    stats_json = Path(__file__).parent.parent / 'node' / "stats.json"
-    output_dir = Path(__file__).parent
+    stats_json = Path(__file__).parent.parent / 'data' / "stats2.json"
+    output_dir = Path(__file__).parent.parent / 'data'
     
     # Load data
     data_list = load_json_lines(stats_json)
@@ -195,7 +181,7 @@ def main():
         print("WARNING: Video ID not found in session data")
     
     # Generate CSVs
-    summary_count = extract_summary_metrics(stats, vid, output_dir)
+    summary_count = extract_kitchen_role_stats(stats, vid, output_dir)
     shot_count = extract_shot_level_data(insights, vid, output_dir)
     
     print(f"\nCSV generation complete: {summary_count + shot_count} total rows written")

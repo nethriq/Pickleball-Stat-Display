@@ -2,9 +2,8 @@ import express from 'express';
 import { PBVision } from '@pbvision/partner-sdk';
 import fs from 'fs';
 import path from 'path';
-import { convertJsonToCsv } from './csv_converter.js';
 
-const video = 'test_video1.mp4'
+const video = path.join(process.cwd(), "..","data", "test_video2.mp4");
 const app = express();
 app.use(express.json({limit: '50mb'}));
 
@@ -23,15 +22,13 @@ app.post('/webhook', (req, res) => {
         console.log(`Stats received for video ${vid}:`, stats);
     }
 
-    // Append webhook data to JSON file
-    const filePath = path.join(process.cwd(), 'stats.json');
+    // Append webhook data to JSON file in data directory outside process.cwd()
+    const dataDir = path.join(process.cwd(), '..', 'data');
+    const filePath = path.join(dataDir, 'stats2.json');
     const data = { timestamp: new Date().toISOString(), payload: req.body };
     
     fs.appendFileSync(filePath, JSON.stringify(data) + '\n');
-    convertJsonToCsv(
-    path.join(process.cwd(), 'stats.json'),
-    path.join(process.cwd(), 'stats.csv')
-);
+    console.log(`Appended stats to ${filePath}`);
     res.sendStatus(200);
 });
 

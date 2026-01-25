@@ -2,10 +2,11 @@ python/venv/
 __pycache__/
 *.pyc
 python/*.csv
-
+.python-version
+python/.ipynb_checkpoints/
 Sprint.md
 node/node_modules/
 nethriq_info.txt
 ngrok_install.sh
 node/ngrok-v3-stable-linux-amd64.tgz
-node/test_video1.mp4
+node/mixed_doubles/
