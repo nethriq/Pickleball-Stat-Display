@@ -10,3 +10,5 @@ nethriq_info.txt
 ngrok_install.sh
 node/ngrok-v3-stable-linux-amd64.tgz
 node/mixed_doubles/
+data/*.csv
+data/*.json
