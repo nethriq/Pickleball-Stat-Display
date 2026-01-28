@@ -1,0 +1,40 @@
+WHEN: shot_idx == 0
+AND: rally_length >= 1
+THEN: clip from shot_idx 0 → 1
+LABEL: Serve Highlight
+
+WHEN: shot_idx == 1
+AND: rally_length >= 2
+THEN: clip from shot_idx 0 → min(2, rally_length-1)
+LABEL: Return of Serve
+
+Rule Name: Long Rally
+WHEN: rally_length >= 8
+THEN: clip from shot_idx=0 -> rally_length-1
+LABEL: Long Rally
+
+Rule Name: 3rd-shot Drop Attempt
+WHEN:
+  shot_idx == 2
+  AND height_over_net BETWEEN (0.5, 4.0)
+  AND depth BETWEEN (kitchen_min, transition_max)
+THEN:
+  clip from shot_idx 0 → min(3, rally_length-1)
+LABEL:
+  "3rd-shot drop attempt"
+LABEL: "3rd-shot drop attempt"
+
+Rule Name: Low-margin Driving Sequence
+WHEN:
+  rally_length <= 5
+  AND count(shot_idx >= 2 AND shot_type == "drive") >= 3
+THEN:
+  clip from shot_idx 0 → rally_length-1
+LABEL:
+  "Low-margin driving sequence"
+LABEL: "Low-margin driving sequence"
+
+Rule Name: Terminal Shot
+WHEN: shot_type == "smash"
+THEN: clip from shot_idx-2 → shot_idx
+LABEL: "Smash finish"

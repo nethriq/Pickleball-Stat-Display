@@ -74,6 +74,8 @@ csv_path = os.path.join(data_dir, 'player_averages.csv')
 shots = pd.read_csv(os.path.join(data_dir, 'shot_level_data.csv'))
 kitchen = pd.read_csv(os.path.join(data_dir, 'kitchen_role_stats.csv'))
 
+shots["depth_from_baseline"]=44-shots["depth"]
+
 # Filter to player's own kitchen stats (not opponent perspective)
 kitchen_self = kitchen[kitchen["perspective"] == "oneself"]
 
@@ -105,13 +107,13 @@ kitchen_wide = (
 
 # Calculate average serve depth and height per player
 serve_averages = shots[shots['shot_role'] == 'serve'].groupby(['vid', 'player_id']).agg(
-    serve_depth_avg=('depth', 'mean'),
+    serve_depth_avg=('depth_from_baseline', 'mean'),
     serve_height_avg=('height_over_net', 'mean')
 ).reset_index()
 
 # Calculate average return depth and height per player
 return_averages = shots[shots['shot_role'] == 'return'].groupby(['vid', 'player_id']).agg(
-    return_depth_avg=('depth', 'mean'),
+    return_depth_avg=('depth_from_baseline', 'mean'),
     return_height_avg=('height_over_net', 'mean')
 ).reset_index()
 
