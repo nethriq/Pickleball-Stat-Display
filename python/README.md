@@ -1,13 +1,14 @@
 # Python Analytics
 
-Converts pickleball match analytics data from `stats.json` into structured CSV files for analysis.
+End-to-end pipeline for pickleball match analytics: data processing, highlight video generation, and player report creation.
 
 ## Overview
 
-This module processes JSON lines data from the Node server and extracts two datasets:
+This module automates three key workflows:
 
-1. **Summary Metrics** (`summary_metrics.csv`): Player-level kitchen coverage statistics aggregated across the match.
-2. **Shot-Level Data** (`shot_level_data.csv`): Individual shot records with ball trajectory and metadata.
+1. **Data Processing** (`process_match_data.py`): Runs the unified processing pipeline that converts raw match data (`stats2.json`) into structured CSVs used elsewhere in the project.
+2. **Highlight Generation** (`video_clipper.py`): Extracts highlight clips from match video, uploads to Google Drive, and generates shareable links.
+3. **Report Generation** (`ppt_injector.py`): Creates personalized player reports with stats and embedded video links.
 
 ## Setup
 
@@ -17,48 +18,86 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Usage
-
+Configure rclone for Google Drive uploads:
 ```bash
-python convert.py
+rclone config
+# Set up "nethriq_drive" as your Google Drive remote
 ```
 
-This reads `../node/stats.json` and generates CSVs in the current directory.
+## Workflow
+
+### Step 1: Data Processing
+
+```bash
+python process_match_data.py
+```
+
+Runs the unified pipeline against `../data/stats2.json` (or `stats.json` where applicable) and produces the canonical CSVs consumed by subsequent steps:
+- `player_averages.csv`: Player-level statistics (serve/return depth, height, kitchen coverage)
+- `highlight_registry.csv`: Highlight event registry (start/end times, type, player, video ID). Contexts may overlap, but they represent 
+                            different viewpoints
+- `shot_level_data.csv`: Individual shot records with trajectory data
+- `kitchen_role_stats.csv`: Role- and perspective-specific kitchen arrival counts and percentages
+
+### Step 2: Highlight Video Generation
+
+```bash
+python video_clipper.py
+```
+
+Reads `highlight_registry.csv` and `../data/test_video2.mp4` to:
+- Extract and concatenate highlight clips by type/player
+- Upload compiled reels to Google Drive via rclone
+- Generate shareable links saved to `../data/video_links.json`
+
+**Configuration**: Adjust `PAD_MS`, `DRY_RUN`, and `CLEANUP_INTERMEDIATE` in the script as needed.
+
+### Step 3: Player Report Generation
+
+```bash
+python ppt_injector.py
+```
+
+Injects data into PowerPoint template:
+- Player stats from `player_averages.csv`
+- Video links from `video_links.json`
+- Generates `../data/player_report.pptx` with embedded hyperlinks
 
 ## Files
 
-- **`convert.py`**: Main conversion script. Extracts and validates data from JSONL input.
-- **`requirements.txt`**: Python dependencies (numpy, pandas, requests, etc.).
-- **`summary_metrics.csv`**: Output. Player stats with kitchen coverage percentages and skill bands.
-- **`shot_level_data.csv`**: Output. Per-shot data with timing, depth, and height metrics.
+- **`process_match_data.py`**: Unified data processing pipeline (stats -> CSVs)
+- **`video_clipper.py`**: Highlight extraction, concatenation, and Google Drive upload
+- **`ppt_injector.py`**: PowerPoint report generation with stats and video links
+- **`highlight_rules.yaml`**: Highlight detection rules configuration
+- **`requirements.txt`**: Python dependencies
 
-## Data Processing
+## Outputs
 
-### Summary Metrics Extraction
+- `player_averages.csv`: Player statistics and skill grades
+- `highlight_registry.csv`: Highlight event metadata
+- `shot_level_data.csv`: Per-shot analytics
+- `../data/video_links.json`: Shareable Google Drive video links
+- `../data/player_report.pptx`: Final player report with embedded media
 
-Processes `stats.players[].kitchen_arrival_percentage` to compute:
-- `serve_kitchen_coverage`: % of serves reaching the kitchen (0–1)
-- `return_kitchen_coverage`: % of returns reaching the kitchen (0–1)
-- Skill bands: Beginner (0–0.4), Intermediate (0.4–0.6), Advanced (0.6–0.8), Pro (0.8+)
+## Data Processing Details
 
-### Shot-Level Extraction
+### Summary Metrics
 
-Iterates through `insights.rallies[].shots[]` and extracts:
-- Ball trajectory metadata (depth, height over net)
-- Shot timing (start_ms, end_ms)
+Extracts player-level statistics:
+- Serve/return depth and height averages
+- Kitchen arrival percentages (% of shots reaching kitchen)
+- Skill grades: Beginner (0–40%), Intermediate (40–60%), Advanced (60–80%), Pro (80%+)
+
+### Shot-Level Data
+
+Per-shot records with:
+- Ball trajectory (depth, height over net)
+- Timing (start_ms, end_ms)
 - Shot classification (serve, return, rally)
-- Player ID and shot type
+- Player and shot type metadata
 
-## Error Handling
+## Architecture Notes
 
-- **Malformed JSON**: Logs line number and skips invalid records.
-- **Missing fields**: Warnings logged for incomplete player or shot data.
-- **Missing video ID**: Prevents shot-level CSV generation if `vid` is absent.
-- **Empty datasets**: Skips CSV generation if no valid rows extracted.
-
-## Dependencies
-
-- **pandas**: Data manipulation
-- **numpy**: Numerical operations
-- **requests**: HTTP utilities
-- **Other**: Standard library utilities (json, csv, pathlib)
+- **Intermediate Cleanup**: Video clipper removes intermediate clips and empty directories after upload
+- **Video Links Storage**: JSON file stored in `data/` for persistence; output directory is transient
+- **Hyperlink Injection**: PPT injector separates display text (token_map) from URLs (link_map) for clean architecture
