@@ -5,11 +5,11 @@ from collections import defaultdict
 from datetime import date
 import json
 import time
-import threading
 # -----------------------
 # Configuration
 # -----------------------
 DRY_RUN = False
+UPLOAD=True
 CLEANUP_INTERMEDIATE=True
 MAX_BEST_SHOT_CLIPS = 10
 MAX_SERVE_CLIPS = 10
@@ -19,14 +19,14 @@ BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "..", "data")
 OUTPUT_DIR = os.path.join(DATA_DIR, "nethriq_media")
 
-INPUT_VIDEO = os.path.join(DATA_DIR, "test_video2.mp4")
+INPUT_VIDEO = os.path.join(DATA_DIR, "test_video3.mp4")
 BEST_SHOTS_CSV = os.path.join(DATA_DIR, "player_best_shots.csv")
 SERVE_RETURN_CSV = os.path.join(DATA_DIR, "highlight_registry.csv")
 PAD_MS = {
     "serve_context":   300,
     "return_context":  300,
     "result_context":  300,
-    "highlight":       50,  # Generic padding for quality highlights
+    "highlight":       1000,  # Generic padding for quality highlights
 }
 
 # -----------------------
@@ -182,33 +182,30 @@ def main():
         return
     
     # Generate best-shot clips (PB Vision) - limited to top N per player
-    best_shots_limited = best_shots[best_shots['tier'] != 'discard'].groupby('player_id', as_index=False).head(MAX_BEST_SHOT_CLIPS)
-    for _, row in best_shots_limited.iterrows():
-        tier = row.get("tier")
-        start_ms = row["start_ms"]
-        end_ms = row["end_ms"]
-        clip_start_ms = row.get("clip_start_ms")
-        clip_end_ms = row.get("clip_end_ms")
-        segment_type = tier if isinstance(tier, str) and tier else "best_shot"
-        rally_idx = row.get("rally_idx")
-        shot_idx = row.get("shot_idx")
-        highlight_idx = f"r{rally_idx}_s{shot_idx}"
-        player_id = row["player_id"]
+    best_shots_sorted = best_shots.sort_values(["player_id", "start_ms"], kind="stable")
+    best_shots_limited = best_shots_sorted.groupby("player_id", as_index=False).head(MAX_BEST_SHOT_CLIPS)
+    for idx, row in best_shots_limited.iterrows():
+        start_ms = row.get("start_ms")
+        end_ms = row.get("end_ms")
+        player_id = row.get("player_id")
+        if pd.isna(start_ms) or pd.isna(end_ms) or pd.isna(player_id):
+            continue
 
-        if pd.notna(clip_start_ms) and pd.notna(clip_end_ms):
-            clip_start = max(0, clip_start_ms)
-            clip_end = clip_end_ms
-        else:
-            clip_start = max(0, start_ms)
-            clip_end = end_ms
+        start_ms = int(start_ms)
+        end_ms = int(end_ms)
+        player_id = int(float(player_id))
+
+        clip_start = max(0, start_ms) - PAD_MS["highlight"]
+        clip_end = end_ms + PAD_MS["highlight"]
 
         group_key = player_id
         clip_dir = os.path.join(OUTPUT_DIR, "players", normalize_player_id(player_id), "best_shots", "clips")
-        
-        os.makedirs(clip_dir, exist_ok=True)
-        clip_path = os.path.join(clip_dir, f"{highlight_idx}_{segment_type}.mp4")
 
-        best_shot_reels[group_key].append((start_ms, clip_path, segment_type))
+        os.makedirs(clip_dir, exist_ok=True)
+        highlight_idx = f"ms{start_ms}_to_{end_ms}"
+        clip_path = os.path.join(clip_dir, f"{highlight_idx}_{idx}.mp4")
+
+        best_shot_reels[group_key].append((start_ms, clip_path, idx))
 
         cmd = [
             "ffmpeg",
@@ -259,7 +256,6 @@ def main():
             ]
 
             run_cmd(cmd)
-
     # Concatenate and upload reels
     for player_id, segments in best_shot_reels.items():
         segments.sort(key=lambda x: x[0])
@@ -269,29 +265,42 @@ def main():
         output_dir = os.path.join(OUTPUT_DIR, "players", normalize_player_id(player_id), "best_shots")
         os.makedirs(output_dir, exist_ok=True)
         list_file = os.path.join(output_dir, "best_shots.txt")
+        output_video = os.path.join(output_dir, "best_shots.mp4")
         rclone_path = f"nethriq_drive:nethriq_media/players/{normalize_player_id(player_id)}/best_shots/best_shots.mp4"
         link_key = f"{normalize_player_id(player_id)}_best_shots"
 
-        # Write concat file and upload
+        # Write concat file
         write_concat_file(clip_paths, list_file)
         list_files.append(list_file)
 
-        # Upload video and get shareable link
-        success, shareable_link = upload_video_to_drive(list_file, rclone_path, link_key)
-        if success and shareable_link:
-            video_links[link_key] = {
-                "link": shareable_link,
-                "status": "success"
-            }
-        else:
-            video_links[link_key] = {
-                "link": None,
-                "status": "failure"
-            }
+        # Concatenate clips locally
+        concat_cmd = [
+            "ffmpeg", "-loglevel", "error", "-f", "concat", "-safe", "0",
+            "-i", list_file,
+            "-c", "copy",
+            "-y",
+            output_video
+        ]
+        run_cmd(concat_cmd)
+        print(f"✅ Created {output_video}")
 
-        # Cleanup list file after upload
-        if os.path.exists(list_file):
-            os.remove(list_file)
+        # Upload video and get shareable link
+        if UPLOAD:
+            success, shareable_link = upload_video_to_drive(list_file, rclone_path, link_key)
+            if success and shareable_link:
+                video_links[link_key] = {
+                    "link": shareable_link,
+                    "status": "success"
+                }
+            else:
+                video_links[link_key] = {
+                    "link": None,
+                    "status": "failure"
+                }
+
+            # Cleanup list file after upload
+            if os.path.exists(list_file):
+                os.remove(list_file)
 
     # Concatenate and upload serve/return reels
     for group_key, clips in serve_return_clips.items():
@@ -302,26 +311,39 @@ def main():
         output_dir = os.path.join(OUTPUT_DIR, "players", normalize_player_id(player_id), "sessions", SESSION_ID, "highlights", highlight_type)
         os.makedirs(output_dir, exist_ok=True)
         list_file = os.path.join(output_dir, f"{highlight_type}.txt")
+        output_video = os.path.join(output_dir, f"{highlight_type}_highlights.mp4")
         rclone_path = f"nethriq_drive:nethriq_media/players/{normalize_player_id(player_id)}/sessions/{SESSION_ID}/highlights/{highlight_type}/{highlight_type}_highlights.mp4"
         link_key = f"{normalize_player_id(player_id)}_{highlight_type}"
 
         write_concat_file(clip_paths, list_file)
         list_files.append(list_file)
 
-        success, shareable_link = upload_video_to_drive(list_file, rclone_path, link_key)
-        if success and shareable_link:
-            video_links[link_key] = {
-                "link": shareable_link,
-                "status": "success"
-            }
-        else:
-            video_links[link_key] = {
-                "link": None,
-                "status": "failure"
-            }
+        # Concatenate clips locally
+        concat_cmd = [
+            "ffmpeg", "-loglevel", "error", "-f", "concat", "-safe", "0",
+            "-i", list_file,
+            "-c", "copy",
+            "-y",
+            output_video
+        ]
+        run_cmd(concat_cmd)
+        print(f"✅ Created {output_video}")
 
-        if os.path.exists(list_file):
-            os.remove(list_file)
+        if UPLOAD:
+            success, shareable_link = upload_video_to_drive(list_file, rclone_path, link_key)
+            if success and shareable_link:
+                video_links[link_key] = {
+                    "link": shareable_link,
+                    "status": "success"
+                }
+            else:
+                video_links[link_key] = {
+                    "link": None,
+                    "status": "failure"
+                }
+
+            if os.path.exists(list_file):
+                os.remove(list_file)
     
     # Cleanup all videos and directories
     if CLEANUP_INTERMEDIATE:

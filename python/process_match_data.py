@@ -20,9 +20,6 @@ SERVE_DEPTH_BANDS = [(2, "Pro"), (4, "Advanced"), (6, "Intermediate")]
 HEIGHT_BANDS = [(2, "Pro"), (2.5, "Advanced"), (3, "Intermediate")]
 SERVE_KITCHEN_BANDS = [(0.9, "Pro"), (0.7, "Advanced"), (0.5, "Intermediate")]
 RETURN_KITCHEN_BANDS = [(0.95, "Pro"), (0.85, "Advanced"), (0.7, "Intermediate")]
-PRE_MS=3000
-POST_MS=3000
-
 
 # ============================================================================
 # Helper Functions
@@ -132,19 +129,21 @@ def classify_shot(score):
 # ============================================================================
 # Stage 1: Extract Kitchen Role Stats
 # ============================================================================
-def extract_kitchen_role_stats(stats, vid, output_dir):
+def extract_kitchen_role_stats(insights, vid, output_dir):
     """Extract kitchen arrival percentages by role and perspective."""
     print("📊 Stage 1: Extracting kitchen role stats...")
-    
-    players = stats.get("players", [])
+
+    players = insights.get("player_data", []) if insights else []
     rows = []
 
-    for player_id, player in enumerate(players):
-        if player is None:
+    for idx, player in enumerate(players):
+        if not isinstance(player, dict):
             continue
         kap = player.get("kitchen_arrival_percentage", {})
-        for role in ("serving", "returning"):
-            role_data = kap.get(role, {})
+        player_id = idx
+        team_id = player.get("team", idx)
+        for role_key, role_data in kap.items():
+            role = "returning" if role_key == "receiving" else role_key
             for perspective in ("oneself", "partner"):
                 ctx = role_data.get(perspective, {})
                 num = ctx.get("numerator")
@@ -156,6 +155,7 @@ def extract_kitchen_role_stats(stats, vid, output_dir):
                 rows.append({
                     "vid": vid,
                     "player_id": player_id,
+                    "team_id": team_id,
                     "role": role,
                     "perspective": perspective,
                     "kitchen_arrivals": num,
@@ -165,7 +165,7 @@ def extract_kitchen_role_stats(stats, vid, output_dir):
 
     csv_path = output_dir / "kitchen_role_stats.csv"
     with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["vid", "player_id", "role", "perspective", "kitchen_arrivals", "opportunities", "kitchen_pct"])
+        writer = csv.DictWriter(f, fieldnames=["vid", "player_id", "team_id", "role", "perspective", "kitchen_arrivals", "opportunities", "kitchen_pct"])
         writer.writeheader()
         writer.writerows(rows)
 
@@ -189,13 +189,33 @@ def extract_shot_level_data(insights, vid, output_dir):
     
     for rally_idx, rally in enumerate(rallies):
         shots = rally.get("shots", [])
+        
+        # Find serve index by checking tags
+        serve_idx = None
+        for idx, shot in enumerate(shots):
+            tags = shot.get("tags", {})
+            if any("type;serve" in key for key in tags.keys()):
+                serve_idx = idx
+                break
+        
         for shot_idx, shot in enumerate(shots):
             ball_movement = shot.get("resulting_ball_movement", {})
             if not ball_movement.get("trajectory"):
                 skipped += 1
                 continue
 
-            shot_role = "serve" if shot_idx == SERVE_INDEX else "return" if shot_idx == RETURN_INDEX else "rally"
+            # Determine shot role based on serve position
+            if serve_idx is not None:
+                if shot_idx == serve_idx:
+                    shot_role = "serve"
+                elif shot_idx == serve_idx + 1:
+                    shot_role = "return"
+                else:
+                    shot_role = "rally"
+            else:
+                # Fallback to old method if no serve found
+                shot_role = "serve" if shot_idx == SERVE_INDEX else "return" if shot_idx == RETURN_INDEX else "rally"
+            
             shot_rows.append({
                 "vid": vid,
                 "rally_idx": rally_idx,
@@ -207,11 +227,11 @@ def extract_shot_level_data(insights, vid, output_dir):
                 "end_ms": shot.get("end_ms"),
                 "depth": ball_movement.get("distance"),
                 "height_over_net": ball_movement.get("height_over_net"),
-                "quality": shot.get("quality"),
-                "advantage_scale": shot.get("advantage_scale"),
+                "quality": shot.get("quality", {}).get("overall") if isinstance(shot.get("quality"), dict) else None,
+                "advantage_scale": shot.get("advantage_scale", [None])[shot.get("player_id")] if isinstance(shot.get("advantage_scale"), list) and shot.get("player_id") is not None else None,
                 "is_final": shot.get("is_final", False),
                 "speed": ball_movement.get("speed"),
-                "is_volleyed": ball_movement.get("volleyed", False)
+                "is_volleyed": shot.get("is_volley", False)
             })
 
     csv_path = output_dir / "shot_level_data.csv"
@@ -226,73 +246,76 @@ def extract_shot_level_data(insights, vid, output_dir):
     return pd.DataFrame(shot_rows)
 
 # ============================================================================
-# Stage 3: Generate Highlight Registry
+# Stage 3: Generate Serve and receive contexts
 # ============================================================================
-def generate_highlight_registry(shot_df, output_dir):
+def generate_serves_and_receives(shot_df, output_dir):
     """Generate serve/return context highlights from shot-level data."""
-    print("📊 Stage 3: Generating highlight registry...")
+    print("📊 Stage 3: Generating serves and receives...")
     
-    highlights = []
+    sr_list = []
     grouped = shot_df.groupby(['vid', 'rally_idx'], sort=False)
     
     for (vid, rally_idx), rally in grouped:
         rally = rally.sort_values('shot_idx')
         
-        if 0 not in rally['shot_idx'].values:
+        # Find serve shot
+        serve_shots = rally[rally['shot_role'] == 'serve']
+        if serve_shots.empty:
             continue
         
-        start_row = rally[rally['shot_idx'] == 0].iloc[0]
+        serve_row = serve_shots.iloc[0]
         
-        # Serve context: shots 0-1
-        end_row = rally[rally['shot_idx'] == 1].iloc[0] if 1 in rally['shot_idx'].values else start_row
-        highlights.append({
+        # Serve context: serve + return (if exists)
+        return_shots = rally[rally['shot_role'] == 'return']
+        end_row = return_shots.iloc[0] if not return_shots.empty else serve_row
+        
+        sr_list.append({
             'vid': vid,
             'rally_idx': rally_idx,
             'highlight_type': 'serve_context',
-            'start_ms': start_row['start_ms'],
+            'start_ms': serve_row['start_ms'],
             'end_ms': end_row['end_ms'],
-            'player_id': start_row['player_id'],
-            'start_shot_idx': start_row['shot_idx'],
+            'player_id': serve_row['player_id'],
+            'start_shot_idx': serve_row['shot_idx'],
             'end_shot_idx': end_row['shot_idx'],
-            'highlight_reason': 'serve_context'
         })
         
-        # Return context: shots 0-3 (or 0-2 or 0-1)
-        if 3 in rally['shot_idx'].values:
-            end_row = rally[rally['shot_idx'] == 3].iloc[0]
-        elif 2 in rally['shot_idx'].values:
-            end_row = rally[rally['shot_idx'] == 2].iloc[0]
-        elif 1 in rally['shot_idx'].values:
-            end_row = rally[rally['shot_idx'] == 1].iloc[0]
-        else:
-            continue
+        # Return context: serve + return + next 2 rally shots (if they exist)
+        rally_shots = rally[rally['shot_role'] == 'rally'].head(2)
         
-        highlights.append({
+        if not rally_shots.empty:
+            end_row = rally_shots.iloc[-1]
+        elif not return_shots.empty:
+            end_row = return_shots.iloc[0]
+        else:
+            end_row = serve_row
+        
+        sr_list.append({
             'vid': vid,
             'rally_idx': rally_idx,
             'highlight_type': 'return_context',
-            'start_ms': start_row['start_ms'],
+            'start_ms': serve_row['start_ms'],
             'end_ms': end_row['end_ms'],
-            'player_id': start_row['player_id'],
-            'start_shot_idx': start_row['shot_idx'],
+            'player_id': serve_row['player_id'],
+            'start_shot_idx': serve_row['shot_idx'],
             'end_shot_idx': end_row['shot_idx'],
-            'highlight_reason': 'return_context'
         })
         
     
-    highlights_df = pd.DataFrame(highlights).sort_values(['vid', 'rally_idx', 'start_ms'])
+    sr_df = pd.DataFrame(sr_list).sort_values(['vid', 'rally_idx', 'start_ms'])
     csv_path = output_dir / "highlight_registry.csv"
-    highlights_df.to_csv(csv_path, index=False)
+    sr_df.to_csv(csv_path, index=False)
     
-    print(f"✅ Generated highlight_registry.csv ({len(highlights_df)} rows)")
-    return highlights_df
+    print(f"✅ Generated serves_and_receives.csv ({len(sr_df)} rows)")
+    return sr_df
 
 # ============================================================================
 # Stage 4: Generate Player Best Shots Compilation (with context)
 # ============================================================================
-def generate_player_best_shots(insights, shot_df, output_dir, top_n=50):
+def generate_player_best_shots(insights, vid,output_dir, top_n=50):
     """
     Uses the data stored in JSON returned by PB Vision API to store start and end times of clips.
+    If highlights structure exists in insights, uses that; otherwise falls back to manual scoring.
     Returns a data frame.
     """
     print("📊 Stage 4: Generating player best-shot registry...")
@@ -301,81 +324,120 @@ def generate_player_best_shots(insights, shot_df, output_dir, top_n=50):
         print("⚠️ Missing insights")
         return pd.DataFrame()
 
-    vid = insights.get("vid") or (
-        shot_df["vid"].iloc[0] if shot_df is not None and not shot_df.empty else None
-    )
     if not vid:
         print("❌ Missing vid for best-shot clips")
         sys.exit(1)
-
-    pre_ms = PRE_MS
-    post_ms = POST_MS
-
-    rows = []
-    rallies = insights.get("rallies", [])
-    for rally_idx, rally in enumerate(rallies):
-        shots = rally.get("shots", [])
-        for shot_idx, shot in enumerate(shots):
-            quality_overall = shot.get("quality", {}).get("overall")
-            score = score_shot(shot)
-            start_ms = shot.get("start_ms")
-            end_ms = shot.get("end_ms")
-            clip_start_ms = max(0, start_ms - pre_ms) if start_ms is not None else None
-            clip_end_ms = end_ms + post_ms if end_ms is not None else None
-
+    
+    # Check if PB Vision highlights exist
+    highlights = insights.get("highlights", [])
+    
+    if highlights:
+        print(f"✨ Using PB Vision highlights ({len(highlights)} found)")
+        rows = []
+        rallies = insights.get("rallies", [])
+        
+        for highlight in highlights:
+            rally_idx = highlight.get("rally_idx")
+            shot_start_idx = highlight.get("shot_start_idx")
+            shot_end_idx = highlight.get("shot_end_idx")
+            
+            # Find player_id from the rally's shots
+            player_id = None
+            if rally_idx is not None and rally_idx < len(rallies):
+                rally = rallies[rally_idx]
+                shots = rally.get("shots", [])
+                if shot_start_idx is not None and shot_start_idx < len(shots):
+                    player_id = shots[shot_start_idx].get("player_id")
+            
             rows.append({
                 "vid": vid,
-                "player_id": shot.get("player_id"),
+                "player_id": player_id,
                 "rally_idx": rally_idx,
-                "shot_idx": shot_idx,
-                "start_ms": start_ms,
-                "end_ms": end_ms,
-                "clip_start_ms": clip_start_ms,
-                "clip_end_ms": clip_end_ms,
-                "winner_type": shot.get("winner_type"),
-                "quality_overall": quality_overall,
-                "score": score,
-                "tier": classify_shot(score),
-                "shot_raw": shot,
+                "shot_start_idx": shot_start_idx,
+                "shot_end_idx": shot_end_idx,
+                "start_ms": highlight.get("s"),
+                "end_ms": highlight.get("e"),
+                "kind": highlight.get("kind"),
+                "score": highlight.get("score"),
+                "rally_ending": highlight.get("rally_ending"),
+                "short_description": highlight.get("short_description"),
             })
-
-    if not rows:
-        print("⚠️ No shots found in insights")
-        empty_cols = [
-            "vid",
-            "player_id",
-            "rally_idx",
-            "shot_idx",
-            "start_ms",
-            "end_ms",
-            "winner_type",
-            "quality_overall",
-            "score",
-            "tier",
-            "clip_start_ms",
-            "clip_end_ms",
-        ]
-        best_df = pd.DataFrame(columns=empty_cols)
-    else:
+        
         best_df = pd.DataFrame(rows)
-        best_df = best_df.sort_values(
-            ["player_id", "score", "start_ms"],
-            ascending=[True, False, True],
-        )
-        best_df = best_df.groupby("player_id", as_index=False).head(top_n)
+        
+        # Sort by player and score
+        if not best_df.empty:
+            best_df = best_df.sort_values(
+                ["player_id", "score", "start_ms"],
+                ascending=[True, False, True],
+            )
+            best_df = best_df.groupby("player_id", as_index=False).head(top_n)
+            
+            score_stats = best_df["score"].describe()
+            print(score_stats)
+            print(f"Max score: {best_df['score'].max()}")
+            print(f"Median score: {best_df['score'].median()}")
+    else:
+        print("⚠️ No PB Vision highlights found, using fallback scoring method")
+        rows = []
+        rallies = insights.get("rallies", [])
+        for rally_idx, rally in enumerate(rallies):
+            shots = rally.get("shots", [])
+            for shot_idx, shot in enumerate(shots):
+                quality_overall = shot.get("quality", {}).get("overall")
+                score = score_shot(shot)
+                start_ms = shot.get("start_ms")
+                end_ms = shot.get("end_ms")
 
-        score_stats = best_df["score"].describe()
-        print(score_stats)
-        print(f"Max score: {best_df['score'].max()}")
-        print(f"Median score: {best_df['score'].median()}")
+                rows.append({
+                    "vid": vid,
+                    "player_id": shot.get("player_id"),
+                    "rally_idx": rally_idx,
+                    "shot_idx": shot_idx,
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                    "winner_type": shot.get("winner_type"),
+                    "quality_overall": quality_overall,
+                    "score": score,
+                    "tier": classify_shot(score),
+                    "shot_raw": shot,
+                })
 
-        top_shot_raw = best_df.iloc[0]["shot_raw"] if not best_df.empty else None
-        if top_shot_raw is not None:
-            print("Top-ranked shot JSON:")
-            print(json.dumps(top_shot_raw, indent=2, ensure_ascii=True))
+        if not rows:
+            print("⚠️ No shots found in insights")
+            empty_cols = [
+                "vid",
+                "player_id",
+                "rally_idx",
+                "shot_idx",
+                "start_ms",
+                "end_ms",
+                "winner_type",
+                "quality_overall",
+                "score",
+                "tier",
+            ]
+            best_df = pd.DataFrame(columns=empty_cols)
+        else:
+            best_df = pd.DataFrame(rows)
+            best_df = best_df.sort_values(
+                ["player_id", "score", "start_ms"],
+                ascending=[True, False, True],
+            )
+            best_df = best_df.groupby("player_id", as_index=False).head(top_n)
 
-    if "shot_raw" in best_df.columns:
-        best_df = best_df.drop(columns=["shot_raw"])
+            score_stats = best_df["score"].describe()
+            print(score_stats)
+            print(f"Max score: {best_df['score'].max()}")
+            print(f"Median score: {best_df['score'].median()}")
+
+            top_shot_raw = best_df.iloc[0]["shot_raw"] if not best_df.empty else None
+            if top_shot_raw is not None:
+                print("Top-ranked shot JSON:")
+                print(json.dumps(top_shot_raw, indent=2, ensure_ascii=True))
+
+        if "shot_raw" in best_df.columns:
+            best_df = best_df.drop(columns=["shot_raw"])
 
     csv_path = output_dir / "player_best_shots.csv"
     best_df.to_csv(csv_path, index=False)
@@ -390,8 +452,7 @@ def calculate_player_averages(shot_df, kitchen_df, output_dir):
     """Calculate player-level statistics and assign grades."""
     print("📊 Stage 5: Calculating player averages...")
     
-    # Compute depth from baseline
-    shot_df["depth_from_baseline"] = 44 - shot_df["depth"]
+    # Use raw depth values (no conversion needed)
     
     # Filter kitchen data
     kitchen_self = kitchen_df[kitchen_df["perspective"] == "oneself"]
@@ -415,13 +476,13 @@ def calculate_player_averages(shot_df, kitchen_df, output_dir):
     
     # Serve metrics
     serve_avg = shot_df[shot_df['shot_role'] == 'serve'].groupby(['vid', 'player_id']).agg(
-        serve_depth_avg=('depth_from_baseline', 'mean'),
+        serve_depth_avg=('depth', 'mean'),
         serve_height_avg=('height_over_net', 'mean')
     ).reset_index()
     
     # Return metrics
     return_avg = shot_df[shot_df['shot_role'] == 'return'].groupby(['vid', 'player_id']).agg(
-        return_depth_avg=('depth_from_baseline', 'mean'),
+        return_depth_avg=('depth', 'mean'),
         return_height_avg=('height_over_net', 'mean')
     ).reset_index()
     
@@ -455,34 +516,35 @@ def main():
     print("🎬 Starting unified match data processing...\n")
     
     data_dir = Path(__file__).parent.parent / 'data'
-    stats_json = data_dir / "stats.json"
+    stats_json = data_dir / "stats3.json"
     
     # Load raw data
     print(f"📂 Loading {stats_json}...")
     data_list = load_json_lines(stats_json)
     
     stats = find_object(data_list, "stats")
+    insights = find_object(data_list, "insights") or {}
     all_rallies = collect_all_rallies(data_list)
-    insights = {
+    rally_insights = {
         "rallies": all_rallies
     }
-    print(f"TOTAL rallies: {len(insights['rallies'])}")
+    print(f"TOTAL rallies: {len(rally_insights['rallies'])}")
     vid = stats.get("session", {}).get("vid") if stats else None
     
     if not vid:
         print("⚠️ Video ID not found")
     
     # Execute pipeline stages
-    kitchen_df = extract_kitchen_role_stats(stats, vid, data_dir)
+    kitchen_df = extract_kitchen_role_stats(insights, vid, data_dir)
     shot_df = extract_shot_level_data(insights, vid, data_dir)
-    highlight_df = generate_highlight_registry(shot_df, data_dir)
-    best_shots_df = generate_player_best_shots(insights, shot_df, data_dir, top_n=50)
+    highlight_df = generate_serves_and_receives(shot_df, data_dir)
+    best_shots_df = generate_player_best_shots(insights, vid, data_dir, top_n=50)
     player_avg_df = calculate_player_averages(shot_df, kitchen_df, data_dir)
     
     print(f"\n✅ Pipeline complete!")
     print(
         f"📊 Generated CSVs: {len(shot_df)} shots, "
-        f"{len(highlight_df)} serve/return highlights, "
+        f"{len(highlight_df)} serve/return contexts, "
         f"{len(best_shots_df)} PB Vision best-shot segments, "
         f"{len(player_avg_df)} players"
     )

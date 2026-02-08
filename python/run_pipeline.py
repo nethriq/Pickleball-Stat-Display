@@ -7,7 +7,7 @@ Executes: data processing → highlight generation → report creation.
 import sys
 import subprocess
 from pathlib import Path
-from kitchen_visualizer import DATA_DIR
+from kitchen_visualizer_ui import DATA_DIR
 
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -68,7 +68,7 @@ def main():
             ],
         ),
         (
-            "kitchen_visualizer.py",
+            "kitchen_visualizer_ui.py",
             "Stage 3: Kitchen Visualization",
             [
                 DATA_DIR / "graphics",

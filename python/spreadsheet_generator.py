@@ -518,8 +518,8 @@ class SpreadsheetGenerator:
         ws.write("B1", "Winner Type", header_fmt)
         ws.write("C1", "Quality Score", header_fmt)
 
-        # Get best shots for this player
-        best_shots = [s for s in self.player_best_shots if int(s["player_id"]) == player_id]
+        # Get best shots for this player - handle float player_ids
+        best_shots = [s for s in self.player_best_shots if int(float(s["player_id"])) == player_id]
 
         if best_shots:
             row = 2

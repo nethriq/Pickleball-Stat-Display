@@ -116,6 +116,21 @@ with open(links_path, "r") as f:
 prs = Presentation(ppt_template_path)
 player_key = f"player_{int(row['player_id'])}"
 
+# Calculate overall grade from average of individual grades
+grade_to_num = {"Beginner": 0, "Intermediate": 1, "Advanced": 2, "Pro": 3}
+num_to_grade = {0: "Beginner", 1: "Intermediate", 2: "Advanced", 3: "Pro"}
+
+grade_values = [
+    grade_to_num.get(row["serve_depth_grade"], 0),
+    grade_to_num.get(row["serve_height_grade"], 0),
+    grade_to_num.get(row["serve_kitchen_grade"], 0),
+    grade_to_num.get(row["return_depth_grade"], 0),
+    grade_to_num.get(row["return_height_grade"], 0),
+    grade_to_num.get(row["return_kitchen_grade"], 0),
+]
+avg_grade_num = round(sum(grade_values) / len(grade_values))
+overall_grade = num_to_grade.get(avg_grade_num, "Intermediate")
+
 token_map = {
     "{{PLAYER}}": row["player_name"] if pd.notna(row["player_name"]) else "Player",
     "{{SERVE_DEPTH_VALUE}}": f"{row['serve_depth_avg']:.2f}",
@@ -126,11 +141,12 @@ token_map = {
     "{{RETURN_DEPTH_GRADE}}": row["return_depth_grade"],
     "{{RETURN_HEIGHT_VALUE}}": f"{row['return_height_avg']:.2f}",
     "{{RETURN_HEIGHT_GRADE}}": row["return_height_grade"],
-    "{{KAS}}": str(float(row["serve_kitchen_pct"] * 100)),
+    "{{KAS}}": f"{row['serve_kitchen_pct'] * 100:.0f}",
     "{{KAS_GRADE}}": row["serve_kitchen_grade"],
-    "{{KAR}}": str(float(row["return_kitchen_pct"] * 100)),
+    "{{KAR}}": f"{row['return_kitchen_pct'] * 100:.0f}",
     "{{KAR_GRADE}}": row["return_kitchen_grade"],
-    "{{OVERALL_GRADE}}": "Advanced for now",
+    "{{OVERALL_GRADE}}": overall_grade,
+    "{{BEST_SHOTS_VIDEO_LINK}}": "Best Shots",
     "{{RETURN_VIDEO_LINK}}": "Returns in Game",
     "{{SERVE_VIDEO_LINK}}": "Serves in Game"
 }
@@ -138,6 +154,9 @@ token_map = {
 token_map = {key: str(value) for key, value in token_map.items()}
 
 link_map = {
+    "{{BEST_SHOTS_VIDEO_LINK}}": video_links.get(
+        f"{player_key}_best_shots", {}
+    ).get("link"),
     "{{RETURN_VIDEO_LINK}}": video_links.get(
         f"{player_key}_return_context", {}
     ).get("link"),
