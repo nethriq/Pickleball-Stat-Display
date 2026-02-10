@@ -3,7 +3,7 @@ import { PBVision } from '@pbvision/partner-sdk';
 import fs from 'fs';
 import path from 'path';
 
-const video = path.join(process.cwd(),"data", "test_video3.mp4");
+const video = path.join(process.cwd(),"data", "test_video4.mp4");
 const app = express();
 app.use(express.json({limit: '50mb'}));
 
@@ -24,7 +24,7 @@ app.post('/webhook', (req, res) => {
 
     // Append webhook data to JSON file in data directory outside process.cwd()
     const dataDir = path.join(process.cwd(), 'data');
-    const filePath = path.join(dataDir, 'stats3.json');
+    const filePath = path.join(dataDir, 'stats4.json');
     const data = { timestamp: new Date().toISOString(), payload: req.body };
     
     fs.appendFileSync(filePath, JSON.stringify(data) + '\n');

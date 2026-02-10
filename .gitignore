@@ -10,10 +10,11 @@ nethriq_info.txt
 ngrok_install.sh
 node/ngrok-v3-stable-linux-amd64.tgz
 node/mixed_doubles/
-data/*.csv
-data/*.json
-data/*.mp4
-data/*.mov
-data/*.avi
+data/player_data/*.csv
+data/stats/*.json
+data/test_vids/*.mp4
+data/test_vids/*.mov
+data/test_vids/*.avi
 data/nethriq_media/
+data/*.json
 client_secret_575025686798-040ts7jqu5q331cnmtatuqu49q987753.apps.googleusercontent.com.json

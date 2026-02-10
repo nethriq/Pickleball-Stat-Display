@@ -93,7 +93,7 @@ def inject_kitchen_snapshot(prs, player_id, graphics_dir):
 # ============================================================================
 # Set up file paths and load data
 # ============================================================================
-csv_path = path.join(path.dirname(path.abspath(__file__)), '..', 'data', 'player_averages.csv')
+csv_path = path.join(path.dirname(path.abspath(__file__)), '..', 'data', 'player_data', 'player_averages.csv')
 ppt_template_path = path.join(path.dirname(path.abspath(__file__)),'..', 'node', 'mixed_doubles', 'NethriQ_Gautham.pptx')
 links_path = path.join(
     path.dirname(path.abspath(__file__)),
@@ -180,6 +180,6 @@ inject_kitchen_snapshot(prs, row['player_id'], graphics_dir)
 # ============================================================================
 # Save output PowerPoint file
 # ============================================================================
-output_ppt_path = path.join(path.dirname(path.abspath(__file__)), '..', 'data', 'player_report.pptx')
+output_ppt_path = path.join(path.dirname(path.abspath(__file__)), '..', 'data', 'reports','player_report.pptx')
 prs.save(output_ppt_path)
 print(f"Generated {output_ppt_path}")

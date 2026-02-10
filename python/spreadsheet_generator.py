@@ -44,10 +44,10 @@ class SpreadsheetGenerator:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Load data
-        self.player_averages = self._load_csv("player_averages.csv")
-        self.shot_level_data = self._load_csv("shot_level_data.csv")
-        self.kitchen_role_stats = self._load_csv("kitchen_role_stats.csv")
-        self.player_best_shots = self._load_csv("player_best_shots.csv")
+        self.player_averages = self._load_csv("player_data/player_averages.csv")
+        self.shot_level_data = self._load_csv("player_data/shot_level_data.csv")
+        self.kitchen_role_stats = self._load_csv("player_data/kitchen_role_stats.csv")
+        self.player_best_shots = self._load_csv("player_data/player_best_shots.csv")
         self.video_links = self._load_video_links()
 
     def _load_video_links(self) -> Dict:

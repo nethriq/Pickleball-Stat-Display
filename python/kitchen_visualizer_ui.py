@@ -85,7 +85,7 @@ def draw_player_token(ax, cx, cy, color, label, align, is_selected=False):
 	)
 
 def render_player_kitchen(player_id: int):
-	df = pd.read_csv(DATA_DIR / "kitchen_role_stats.csv")
+	df = pd.read_csv(DATA_DIR / "player_data/kitchen_role_stats.csv")
 
 	df = df[df["perspective"] == "oneself"]
 

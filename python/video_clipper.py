@@ -19,7 +19,7 @@ BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "..", "data")
 OUTPUT_DIR = os.path.join(DATA_DIR, "nethriq_media")
 
-INPUT_VIDEO = os.path.join(DATA_DIR, "test_video3.mp4")
+INPUT_VIDEO = os.path.join(DATA_DIR, "test_video4.mp4")
 BEST_SHOTS_CSV = os.path.join(DATA_DIR, "player_best_shots.csv")
 SERVE_RETURN_CSV = os.path.join(DATA_DIR, "highlight_registry.csv")
 PAD_MS = {

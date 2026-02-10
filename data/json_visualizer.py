@@ -145,7 +145,7 @@ def print_kitchen_arrival(entry, player_id=None):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="PB Vision JSON inspector")
-    parser.add_argument("--json-path", default="data/stats.json", help="Path to JSONL file")
+    parser.add_argument("--json-path", default="data/stats/stats.json", help="Path to JSONL file")
     parser.add_argument("--overview", action="store_true", help="Print a structure overview")
     parser.add_argument("--shots", action="store_true", help="Print sample shots")
     parser.add_argument("--max-shots", type=int, default=4, help="Max shots to print")

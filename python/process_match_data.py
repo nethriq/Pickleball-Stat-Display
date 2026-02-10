@@ -475,16 +475,32 @@ def calculate_player_averages(shot_df, kitchen_df, output_dir):
         kitchen_wide["return_kitchen_pct"] = pd.NA
     
     # Serve metrics
-    serve_avg = shot_df[shot_df['shot_role'] == 'serve'].groupby(['vid', 'player_id']).agg(
-        serve_depth_avg=('depth', 'mean'),
-        serve_height_avg=('height_over_net', 'mean')
-    ).reset_index()
+    serve_stats = shot_df[shot_df['shot_role'] == 'serve'].copy()
+    serve_stats['depth'] = pd.to_numeric(serve_stats['depth'], errors='coerce')
+    serve_avg = (
+        serve_stats
+        .groupby(['vid', 'player_id'])
+        .agg(
+            serve_depth_avg=('depth', 'mean'),
+            serve_height_avg=('height_over_net', 'mean')
+        )
+        .reset_index()
+    )
+    serve_avg['serve_depth_avg'] = 44 - serve_avg['serve_depth_avg']
     
     # Return metrics
-    return_avg = shot_df[shot_df['shot_role'] == 'return'].groupby(['vid', 'player_id']).agg(
-        return_depth_avg=('depth', 'mean'),
-        return_height_avg=('height_over_net', 'mean')
-    ).reset_index()
+    return_stats = shot_df[shot_df['shot_role'] == 'return'].copy()
+    return_stats['depth'] = pd.to_numeric(return_stats['depth'], errors='coerce')
+    return_avg = (
+        return_stats
+        .groupby(['vid', 'player_id'])
+        .agg(
+            return_depth_avg=('depth', 'mean'),
+            return_height_avg=('height_over_net', 'mean')
+        )
+        .reset_index()
+    )
+    return_avg['return_depth_avg'] = 44 - return_avg['return_depth_avg']
     
     # Combine
     player_avg = (
@@ -516,7 +532,8 @@ def main():
     print("🎬 Starting unified match data processing...\n")
     
     data_dir = Path(__file__).parent.parent / 'data'
-    stats_json = data_dir / "stats3.json"
+    output_dir = data_dir / 'player_data'
+    stats_json = data_dir / 'stats' / "stats4.json"
     
     # Load raw data
     print(f"📂 Loading {stats_json}...")
@@ -535,11 +552,11 @@ def main():
         print("⚠️ Video ID not found")
     
     # Execute pipeline stages
-    kitchen_df = extract_kitchen_role_stats(insights, vid, data_dir)
-    shot_df = extract_shot_level_data(insights, vid, data_dir)
-    highlight_df = generate_serves_and_receives(shot_df, data_dir)
-    best_shots_df = generate_player_best_shots(insights, vid, data_dir, top_n=50)
-    player_avg_df = calculate_player_averages(shot_df, kitchen_df, data_dir)
+    kitchen_df = extract_kitchen_role_stats(insights, vid, output_dir)
+    shot_df = extract_shot_level_data(insights, vid, output_dir)
+    highlight_df = generate_serves_and_receives(shot_df, output_dir)
+    best_shots_df = generate_player_best_shots(insights, vid, output_dir, top_n=50)
+    player_avg_df = calculate_player_averages(shot_df, kitchen_df, output_dir)
     
     print(f"\n✅ Pipeline complete!")
     print(
