@@ -5,11 +5,12 @@ from collections import defaultdict
 from datetime import date
 import json
 import time
+import shutil
 # -----------------------
 # Configuration
 # -----------------------
 DRY_RUN = False
-UPLOAD=True
+UPLOAD=False
 CLEANUP_INTERMEDIATE=True
 MAX_BEST_SHOT_CLIPS = 10
 MAX_SERVE_CLIPS = 10
@@ -18,10 +19,11 @@ SESSION_ID = date.today().isoformat()
 BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "..", "data")
 OUTPUT_DIR = os.path.join(DATA_DIR, "nethriq_media")
+DELIVERY_DIR = os.path.join(DATA_DIR, "delivery_staging")
 
-INPUT_VIDEO = os.path.join(DATA_DIR, "test_video4.mp4")
-BEST_SHOTS_CSV = os.path.join(DATA_DIR, "player_best_shots.csv")
-SERVE_RETURN_CSV = os.path.join(DATA_DIR, "highlight_registry.csv")
+INPUT_VIDEO = os.path.join(DATA_DIR, "test_vids" ,"test_video4.mp4")
+BEST_SHOTS_CSV = os.path.join(DATA_DIR, "player_data", "player_best_shots.csv")
+SERVE_RETURN_CSV = os.path.join(DATA_DIR, "player_data", "highlight_registry.csv")
 PAD_MS = {
     "serve_context":   300,
     "return_context":  300,
@@ -47,18 +49,25 @@ def run_cmd(cmd):
         subprocess.run(cmd, check=True)
 
 def cleanup_all_videos(root_dir):
-    """Recursively delete all .mp4 files from root_dir."""
+    """Recursively delete intermediate .mp4 files from root_dir, keeping final reels."""
     deleted = 0
     for dirpath, dirnames, filenames in os.walk(root_dir):
         for filename in filenames:
-            if filename.endswith(".mp4"):
-                file_path = os.path.join(dirpath, filename)
-                try:
-                    os.remove(file_path)
-                    deleted += 1
-                except OSError:
-                    pass
-    print(f"🧹 Deleted {deleted} video files")
+            if not filename.endswith(".mp4"):
+                continue
+
+            is_final_best_shots = filename == "best_shots.mp4"
+            is_final_highlights = filename.endswith("_highlights.mp4")
+            if is_final_best_shots or is_final_highlights:
+                continue
+
+            file_path = os.path.join(dirpath, filename)
+            try:
+                os.remove(file_path)
+                deleted += 1
+            except OSError:
+                pass
+    print(f"🧹 Deleted {deleted} intermediate video files")
 
 def cleanup_empty_directories(root_dir):
     """Recursively remove empty directories from root_dir downwards."""
@@ -157,6 +166,51 @@ def upload_video_to_drive(list_file, rclone_path, link_key):
     except Exception as e:
         print(f"⚠️ Unexpected error for {link_key}: {str(e)}")
         return False, None
+
+def stage_delivery_layout(output_dir, delivery_dir, session_id):
+    """Create a delivery staging layout with copied final reels."""
+    players_root = os.path.join(output_dir, "players")
+    if not os.path.isdir(players_root):
+        return
+
+    for player_dir in os.listdir(players_root):
+        if not player_dir.startswith("player_"):
+            continue
+
+        player_id = player_dir.split("_", 1)[1]
+        delivery_player_dir = os.path.join(delivery_dir, f"Player_{player_id}")
+        videos_dir = os.path.join(delivery_player_dir, "Videos")
+        reports_dir = os.path.join(delivery_player_dir, "Reports")
+        data_dir = os.path.join(delivery_player_dir, "Data")
+
+        os.makedirs(videos_dir, exist_ok=True)
+        os.makedirs(reports_dir, exist_ok=True)
+        os.makedirs(data_dir, exist_ok=True)
+
+        best_shots_src = os.path.join(players_root, player_dir, "best_shots", "best_shots.mp4")
+        if os.path.exists(best_shots_src):
+            shutil.copy2(best_shots_src, os.path.join(videos_dir, "Best_Shots.mp4"))
+
+        for highlight_type, dest_name in [
+            ("serve_context", "Serve_Context.mp4"),
+            ("return_context", "Return_Context.mp4"),
+        ]:
+            highlights_src = os.path.join(
+                players_root,
+                player_dir,
+                "sessions",
+                session_id,
+                "highlights",
+                highlight_type,
+                f"{highlight_type}_highlights.mp4",
+            )
+            if os.path.exists(highlights_src):
+                shutil.copy2(highlights_src, os.path.join(videos_dir, dest_name))
+
+        report_path = os.path.join(reports_dir, "player_report.pptx")
+        if not os.path.exists(report_path):
+            with open(report_path, "wb"):
+                pass
 
 # -----------------------
 # Load highlights
@@ -349,6 +403,9 @@ def main():
     if CLEANUP_INTERMEDIATE:
         cleanup_all_videos(OUTPUT_DIR)
         cleanup_empty_directories(OUTPUT_DIR)
+
+    # Build delivery staging layout from final reels
+    stage_delivery_layout(OUTPUT_DIR, DELIVERY_DIR, SESSION_ID)
 
     # Save video links to JSON file for later use in PPT
     links_file = os.path.join(DATA_DIR, "video_links.json")

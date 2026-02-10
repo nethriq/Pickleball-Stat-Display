@@ -1,6 +1,5 @@
 import pandas as pd
 from pptx import Presentation
-from copy import deepcopy
 from os import path
 import json
 
