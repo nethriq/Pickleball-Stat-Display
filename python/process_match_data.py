@@ -524,6 +524,39 @@ def calculate_player_averages(shot_df, kitchen_df, output_dir):
     print(f"✅ Generated player_averages.csv ({len(player_avg)} rows)")
     return player_avg
 
+def stage_delivery_data(output_dir, data_dir, player_ids):
+    """Copy generated CSVs into each player's delivery staging Data folder."""
+    csv_names = [
+        "kitchen_role_stats.csv",
+        "player_best_shots.csv",
+        "player_averages.csv",
+    ]
+
+    dataframes = {}
+    for csv_name in csv_names:
+        src = output_dir / csv_name
+        if not src.exists():
+            continue
+        try:
+            df = pd.read_csv(src)
+        except Exception:
+            continue
+        if "player_id" not in df.columns:
+            continue
+        df["player_id"] = pd.to_numeric(df["player_id"], errors="coerce")
+        dataframes[csv_name] = df
+
+    for player_id in sorted(player_ids):
+        delivery_data_dir = data_dir / "delivery_staging" / f"Player_{player_id}" / "Data"
+        delivery_data_dir.mkdir(parents=True, exist_ok=True)
+
+        for csv_name, df in dataframes.items():
+            player_df = df[df["player_id"] == player_id]
+            if player_df.empty:
+                continue
+            dst = delivery_data_dir / csv_name
+            player_df.to_csv(dst, index=False)
+
 # ============================================================================
 # Main Orchestration
 # ============================================================================
@@ -557,6 +590,10 @@ def main():
     highlight_df = generate_serves_and_receives(shot_df, output_dir)
     best_shots_df = generate_player_best_shots(insights, vid, output_dir, top_n=50)
     player_avg_df = calculate_player_averages(shot_df, kitchen_df, output_dir)
+
+    if not player_avg_df.empty:
+        player_ids = set(int(pid) for pid in player_avg_df["player_id"].dropna().unique())
+        stage_delivery_data(output_dir, data_dir, player_ids)
     
     print(f"\n✅ Pipeline complete!")
     print(

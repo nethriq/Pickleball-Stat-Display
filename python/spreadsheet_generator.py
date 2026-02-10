@@ -34,14 +34,15 @@ class SpreadsheetGenerator:
         
         Args:
             data_dir: Directory containing CSV files
-            output_dir: Output directory for Excel files (defaults to reports/ in parent)
+            output_dir: Output directory for Excel files (defaults to delivery_staging/Reports in parent)
         """
         self.data_dir = Path(data_dir)
         
         if output_dir is None:
-            output_dir = self.data_dir / "reports"
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+            self.output_dir = None
+        else:
+            self.output_dir = Path(output_dir)
+            self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Load data
         self.player_averages = self._load_csv("player_data/player_averages.csv")
@@ -185,9 +186,15 @@ class SpreadsheetGenerator:
         """Generate analytics spreadsheet for a player."""
         player_data = self._get_player_data(player_id)
         info = player_data["info"]
+
+        if self.output_dir is None:
+            output_dir = self.data_dir / "delivery_staging" / f"Player_{player_id}" / "Reports"
+        else:
+            output_dir = self.output_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
         
         # Create workbook
-        output_file = self.output_dir / f"player_{player_id}_analysis.xlsx"
+        output_file = output_dir / f"player_{player_id}_analysis.xlsx"
         workbook = xlsxwriter.Workbook(str(output_file))
         
         # Define formats
