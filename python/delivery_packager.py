@@ -1,6 +1,4 @@
 """
-    1. Create temp delivery directory
-    2. Copies PPT, Excel sheets, CSVs and final clips.
     3. Writes a README file with instructions for the client.
     4. Zips the delivery directory and saves it to the specified location.
     5. Returns zip path for reference.
@@ -8,36 +6,58 @@
     7. Cleanup.
 """
 import zipfile
-import shutil
+import json
 from pathlib import Path
-from video_clipper import BASE_DIR, DATA_DIR, SESSION_ID
-DELIVERY_DIR = BASE_DIR / "deliveries"
+import shutil
+from datetime import datetime, timezone
 
-def build_delivery_bundle()->Path:
-    bundle_root = DELIVERY_DIR / f"NethriQ_Report_{SESSION_ID}"
-    bundle_root.mkdir(parents=True, exist_ok=True)
+BASE_DIR = Path(__file__).parent.parent
+DELIVERY_STAGING = BASE_DIR / "data" / "delivery_staging"
+DELIVERY_OUT = BASE_DIR / "data" / "deliveries"
+LOG_DIR = DELIVERY_OUT / "logs"
 
-    # Subfolders
-    (bundle_root / "Reports").mkdir()
-    (bundle_root / "Videos").mkdir()
-    (bundle_root / "Data").mkdir()
+DELIVERY_OUT.mkdir(exist_ok=True)
+LOG_DIR.mkdir(exist_ok=True)
 
-    # Copy files
-    shutil.copy(DATA_DIR / "reports" / "player_report.pptx", bundle_root / "Reports")
-    shutil.copy(DATA_DIR / "reports" / "player_analysis.xlsx", bundle_root / "Reports")
+def zip_player_bundle(player_dir: Path, date_str: str) -> Path:
+    player_name = player_dir.name
+    player_id = player_name.split("_", 1)[1] if "_" in player_name else player_name
+    zip_name = f"Nethriq_Player_{player_id}_{date_str}.zip"
+    zip_path = DELIVERY_OUT / zip_name
 
-    for csv in ["player_averages.csv", "shot_level_data.csv", "highlight_registry.csv"]:
-        shutil.copy(DATA_DIR / "player_data" / csv, bundle_root / "Data")
-
-    # Copy final videos (NOT raw clips)
-    videos_dir = DATA_DIR / "nethriq_media"
-    for video in videos_dir.glob("*.mp4"):
-        shutil.copy(video, bundle_root / "Videos")
-
-    # Zip
-    zip_path = DELIVERY_DIR / f"{bundle_root.name}.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
-        for file in bundle_root.rglob("*"):
-            z.write(file, file.relative_to(bundle_root.parent))
+        for file in player_dir.rglob("*"):
+            z.write(file, file.relative_to(player_dir.parent))
 
-    return zip_path    
+    return zip_path
+
+def build_delivery_bundles(cleanup: bool = True):
+    results = []
+    date_str = datetime.now(timezone.utc).date().isoformat()
+
+    for player_dir in DELIVERY_STAGING.iterdir():
+        if not player_dir.is_dir():
+            continue
+
+        zip_path = zip_player_bundle(player_dir, date_str)
+
+        log = {
+            "player": player_dir.name,
+            "zip": zip_path.name,
+            "status": "created",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        }
+        results.append(log)
+
+        if cleanup:
+            shutil.rmtree(player_dir)
+
+    # Write delivery log
+    log_path = LOG_DIR / f"delivery_{datetime.now(timezone.utc).date()}.json"
+    with open(log_path, "w") as f:
+        json.dump(results, f, indent=2)
+
+    return results
+
+if __name__ == "__main__":
+    build_delivery_bundles()
