@@ -44,6 +44,9 @@ def build_delivery_bundles(cleanup: bool = True):
         log = {
             "player": player_dir.name,
             "zip": zip_path.name,
+            "email": None,
+            "upload_status": None,
+            "email_status": None,
             "status": "created",
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         }

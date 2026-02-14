@@ -1,8 +1,11 @@
+import json
+import os
+from os import path
+
 import pandas as pd
 from pptx import Presentation
-from os import path
-import json
 
+THUMBNAIL = "static"
 
 def replace_tokens_and_links(shape, token_map, link_map):
     """
@@ -89,6 +92,54 @@ def inject_kitchen_snapshot(prs, player_id, graphics_dir):
     
     print("Warning: Placeholder 'KITCHEN_SNAPSHOT' not found in the target slide")
 
+def inject_thumbnail(prs, player_id, media_dir):
+    """
+    Inject hero thumbnail into the slide titled "NethriQ Benchmarks" and
+    replace the image placeholder named "THUMBNAIL".
+    """
+    player_key = f"player_{int(player_id)}"
+    candidate_path = path.join(media_dir, "players", player_key, "hero", "hero_thumbnail.jpg")
+    image_path = candidate_path if path.exists(candidate_path) else None
+
+    if not image_path:
+        print(f"Warning: Thumbnail not found for {player_key}")
+        return
+
+    target_slide = None
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                slide_title = shape.text.strip()
+                if "NethriQ Benchmarks" in slide_title:
+                    target_slide = slide
+                    break
+        if target_slide:
+            break
+
+    if not target_slide:
+        print("Warning: Slide titled 'NethriQ Benchmarks' not found")
+        return
+
+    for shape in target_slide.shapes:
+        if shape.name == "THUMBNAIL":
+            left = shape.left
+            top = shape.top
+            width = shape.width
+            height = shape.height
+
+            shape._element.getparent().remove(shape._element)
+
+            target_slide.shapes.add_picture(
+                image_path,
+                left,
+                top,
+                width=width,
+                height=height
+            )
+            return
+
+    print("Warning: Placeholder 'THUMBNAIL' not found in the target slide")
+
 # ============================================================================
 # Set up file paths and load data
 # ============================================================================
@@ -101,6 +152,10 @@ links_path = path.join(
 graphics_dir = path.join(
     path.dirname(path.abspath(__file__)),
     '..', 'data', 'graphics'
+)
+media_dir = path.join(
+    path.dirname(path.abspath(__file__)),
+    '..', 'data', 'nethriq_media'
 )
 
 df = pd.read_csv(csv_path)
@@ -175,10 +230,21 @@ for slide in prs.slides:
 # Inject kitchen snapshot image
 # ============================================================================
 inject_kitchen_snapshot(prs, row['player_id'], graphics_dir)
+if THUMBNAIL == "static":
+    inject_thumbnail(prs, row['player_id'], media_dir)
 
 # ============================================================================
 # Save output PowerPoint file
 # ============================================================================
-output_ppt_path = path.join(path.dirname(path.abspath(__file__)), '..', 'data', 'reports','player_report.pptx')
+output_dir = path.join(
+    path.dirname(path.abspath(__file__)),
+    '..',
+    'data',
+    'delivery_staging',
+    f"Player_{int(row['player_id'])}",
+    'Reports'
+)
+os.makedirs(output_dir, exist_ok=True)
+output_ppt_path = path.join(output_dir, 'player_report.pptx')
 prs.save(output_ppt_path)
 print(f"Generated {output_ppt_path}")

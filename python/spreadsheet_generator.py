@@ -194,7 +194,7 @@ class SpreadsheetGenerator:
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Create workbook
-        output_file = output_dir / f"player_{player_id}_analysis.xlsx"
+        output_file = output_dir / f"player_analysis.xlsx"
         workbook = xlsxwriter.Workbook(str(output_file))
         
         # Define formats
