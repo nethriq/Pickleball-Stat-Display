@@ -29,6 +29,7 @@ TOKEN_RADIUS = 0.0285
 TOKEN_TEXT_GAP = 0.02
 GLOW_LW = 6
 GLOW_ALPHA = 0.18
+X_SCALE = 2.1
 
 def draw_player_tile(ax, x, y, w, h, pct, color, fills_from_left, max_fill_w):
 	"""Draw a simple tile with a flat bar fill and percentage text."""
@@ -52,7 +53,7 @@ def draw_player_tile(ax, x, y, w, h, pct, color, fills_from_left, max_fill_w):
 		f"{int(round(pct * 100))}%",
 		ha="center",
 		va="center",
-		fontsize=14,
+		fontsize=21,
 		fontweight="bold",
 		color=text_color,
 	)
@@ -79,10 +80,30 @@ def draw_player_token(ax, cx, cy, color, label, align, is_selected=False):
 		label,
 		ha=text_ha,
 		va="center",
-		fontsize=11,
+		fontsize=17,
 		fontweight="semibold",
 		color="#222222",
 	)
+
+def build_player_legend(ax, player_ids, anchor):
+	"""Add a legend for the active players only."""
+	handles = [
+		patches.Patch(color=PLAYER_COLORS[pid], label=f"P{pid}")
+		for pid in player_ids
+	]
+	ncol = 2 if len(player_ids) > 2 else len(player_ids)
+	legend = ax.legend(
+		handles=handles,
+		loc="lower right",
+		bbox_to_anchor=anchor,
+		ncol=ncol,
+		frameon=False,
+		fontsize=15,
+		columnspacing=1.4,
+		handlelength=1.4,
+	)
+	for text in legend.get_texts():
+		text.set_color("#222222")
 
 def render_player_kitchen(player_id: int):
 	df = pd.read_csv(DATA_DIR / "player_data/kitchen_role_stats.csv")
@@ -95,20 +116,24 @@ def render_player_kitchen(player_id: int):
 	# Detect if singles or doubles
 	all_player_ids = set(df["player_id"].unique())
 	is_singles = 1 not in all_player_ids and 3 not in all_player_ids
+	legend_players = [0, 2] if is_singles else [0, 1, 2, 3]
+
+	def sx(x):
+		return MID_X + (x - MID_X) * X_SCALE
 	
-	fig, (ax_serve, ax_ret) = plt.subplots(1, 2, figsize=(14, 7))
+	fig, (ax_serve, ax_ret) = plt.subplots(2, 1, figsize=(14.7, 14))
 
 	for ax, role_df, title in [
 		(ax_serve, serve, "Kitchen Arrival: When Serving"),
 		(ax_ret, ret, "Kitchen Arrival: When Returning"),
 	]:
-		ax.set_xlim(0, 1)
+		ax.set_xlim(sx(0), sx(1))
 		ax.set_ylim(0, 1)
 		ax.set_aspect("equal")
-		ax.set_title(title, fontsize=13, fontweight="semibold", color="#222222", pad=20)
+		ax.set_title(title, fontsize=19.5, fontweight="semibold", color="#222222", pad=20)
 		ax.axis("off")
 
-		tile_w = TILE_W
+		tile_w = TILE_W * X_SCALE
 		tile_h = TILE_H
 		
 		# Define positions: always 4 tiles, but only populate data for present players
@@ -121,6 +146,9 @@ def render_player_kitchen(player_id: int):
 
 		left_kitchen_x = MID_X - TILE_W * KITCHEN_FRAC
 		right_kitchen_x = MID_X + TILE_W * KITCHEN_FRAC
+		left_kitchen_x_draw = sx(left_kitchen_x)
+		right_kitchen_x_draw = sx(right_kitchen_x)
+		mid_x_draw = sx(MID_X)
 
 		# In singles mode, create extended positions for P0 and P2
 		if is_singles:
@@ -139,14 +167,15 @@ def render_player_kitchen(player_id: int):
 			
 			player_data = role_df[role_df["player_id"] == pid]
 			kitchen_pct = player_data["kitchen_pct"].values[0] if len(player_data) > 0 else 0
+			x_off_draw = sx(x_off)
 			fills_from_left = x_off < MID_X
 			if fills_from_left:
-				max_fill_w = max(0.0, left_kitchen_x - x_off)
+				max_fill_w = max(0.0, left_kitchen_x_draw - x_off_draw)
 			else:
-				max_fill_w = max(0.0, x_off + tile_w - right_kitchen_x)
+				max_fill_w = max(0.0, x_off_draw + tile_w - right_kitchen_x_draw)
 			draw_player_tile(
 				ax,
-				x_off,
+				x_off_draw,
 				y_off,
 				tile_w,
 				tile_h_display,
@@ -159,10 +188,10 @@ def render_player_kitchen(player_id: int):
 			# Center token vertically in singles mode
 			token_y = y_off + tile_h_display / 2
 			if x_off < MID_X:
-				token_x = GUTTER / 2
+				token_x = sx(GUTTER / 2)
 				align = "left"
 			else:
-				token_x = COURT_X + COURT_W + GUTTER / 2
+				token_x = sx(COURT_X + COURT_W + GUTTER / 2)
 				align = "right"
 			draw_player_token(
 				ax,
@@ -174,12 +203,14 @@ def render_player_kitchen(player_id: int):
 				is_selected=(pid == player_id),
 			)
 
-		ax.plot([MID_X, MID_X], [0, 1], color="black", lw=3)
-		ax.plot([left_kitchen_x, left_kitchen_x], [0, 1], color="black", lw=2.0)
-		ax.plot([right_kitchen_x, right_kitchen_x], [0, 1], color="black", lw=2.0)
+		ax.plot([mid_x_draw, mid_x_draw], [0, 1], color="black", lw=3)
+		ax.plot([left_kitchen_x_draw, left_kitchen_x_draw], [0, 1], color="black", lw=2.0)
+		ax.plot([right_kitchen_x_draw, right_kitchen_x_draw], [0, 1], color="black", lw=2.0)
 		ax.plot([0, 1], [MID_Y, MID_Y], color="#efefef", lw=0)
-		ax.plot([COURT_X, left_kitchen_x], [MID_Y, MID_Y], color="black", lw=2.0)
-		ax.plot([right_kitchen_x, COURT_X + COURT_W], [MID_Y, MID_Y], color="black", lw=2.0)
+		ax.plot([sx(COURT_X), left_kitchen_x_draw], [MID_Y, MID_Y], color="black", lw=2.0)
+		ax.plot([right_kitchen_x_draw, sx(COURT_X + COURT_W)], [MID_Y, MID_Y], color="black", lw=2.0)
+
+		build_player_legend(ax, legend_players, anchor=(1.0, -0.03))
 
 	plt.tight_layout()
 	output_file = OUT_DIR / f"kitchen_player_{player_id}.png"

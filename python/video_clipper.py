@@ -5,23 +5,29 @@ from collections import defaultdict
 from datetime import date
 import json
 import time
+import shutil
 # -----------------------
 # Configuration
 # -----------------------
 DRY_RUN = False
-UPLOAD=True
+HERO_MODE="static" #Options: "video" (generate hero clips) or "static" (use a placeholder image for hero slide)
+UPLOAD=False
 CLEANUP_INTERMEDIATE=True
 MAX_BEST_SHOT_CLIPS = 10
 MAX_SERVE_CLIPS = 10
 MAX_RETURN_CLIPS = 10
+HERO_CLIP_NAME = "hero_clip.mp4"
+HERO_THUMBNAIL_NAME = "hero_thumbnail.jpg"
+HERO_PAD_MS = 300
 SESSION_ID = date.today().isoformat()
 BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "..", "data")
 OUTPUT_DIR = os.path.join(DATA_DIR, "nethriq_media")
+DELIVERY_DIR = os.path.join(DATA_DIR, "delivery_staging")
 
-INPUT_VIDEO = os.path.join(DATA_DIR, "test_video4.mp4")
-BEST_SHOTS_CSV = os.path.join(DATA_DIR, "player_best_shots.csv")
-SERVE_RETURN_CSV = os.path.join(DATA_DIR, "highlight_registry.csv")
+INPUT_VIDEO = os.path.join(DATA_DIR, "test_vids" ,"test_video4.mp4")
+BEST_SHOTS_CSV = os.path.join(DATA_DIR, "player_data", "player_best_shots.csv")
+SERVE_RETURN_CSV = os.path.join(DATA_DIR, "player_data", "highlight_registry.csv")
 PAD_MS = {
     "serve_context":   300,
     "return_context":  300,
@@ -47,18 +53,26 @@ def run_cmd(cmd):
         subprocess.run(cmd, check=True)
 
 def cleanup_all_videos(root_dir):
-    """Recursively delete all .mp4 files from root_dir."""
+    """Recursively delete intermediate .mp4 files from root_dir, keeping final reels."""
     deleted = 0
     for dirpath, dirnames, filenames in os.walk(root_dir):
         for filename in filenames:
-            if filename.endswith(".mp4"):
-                file_path = os.path.join(dirpath, filename)
-                try:
-                    os.remove(file_path)
-                    deleted += 1
-                except OSError:
-                    pass
-    print(f"🧹 Deleted {deleted} video files")
+            if not filename.endswith(".mp4"):
+                continue
+
+            is_final_best_shots = filename == "best_shots.mp4"
+            is_final_highlights = filename.endswith("_highlights.mp4")
+            is_hero_clip = filename == HERO_CLIP_NAME
+            if is_final_best_shots or is_final_highlights or is_hero_clip:
+                continue
+
+            file_path = os.path.join(dirpath, filename)
+            try:
+                os.remove(file_path)
+                deleted += 1
+            except OSError:
+                pass
+    print(f"🧹 Deleted {deleted} intermediate video files")
 
 def cleanup_empty_directories(root_dir):
     """Recursively remove empty directories from root_dir downwards."""
@@ -158,6 +172,185 @@ def upload_video_to_drive(list_file, rclone_path, link_key):
         print(f"⚠️ Unexpected error for {link_key}: {str(e)}")
         return False, None
 
+def compress_clip(input_path: str, output_path: str):
+    """Compress a clip for lightweight PPT embedding."""
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", input_path,
+        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease",
+        "-c:v", "libx264",
+        "-preset", "slow",
+        "-crf", "28",
+        "-pix_fmt", "yuv420p",
+        "-profile:v", "high",
+        "-level", "4.0",
+        "-movflags", "+faststart",
+        "-c:a", "aac",
+        "-b:a", "96k",
+        output_path,
+    ]
+    subprocess.run(cmd, check=True)
+
+def get_video_duration_seconds(video_path: str) -> float:
+    """Return video duration in seconds, or 0.0 on failure."""
+    cmd = [
+        "ffprobe",
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        video_path,
+    ]
+    try:
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return float(result.stdout.strip())
+    except (subprocess.CalledProcessError, ValueError):
+        return 0.0
+
+def extract_midpoint_frame(video_path: str, output_path: str):
+    """Extract a midpoint frame for a sharp hero thumbnail."""
+    duration = get_video_duration_seconds(video_path)
+    midpoint = max(0.0, duration / 2.0)
+    cmd = [
+        "ffmpeg",
+        "-ss", f"{midpoint:.3f}",
+        "-i", video_path,
+        "-vframes", "1",
+        "-q:v", "2",
+        output_path,
+    ]
+    run_cmd(cmd)
+
+def pick_best_shot_rows(best_shots_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Rank best shots per player and return the top row per player.
+    Priority:
+      1) short_description contains "exciting exchange" (case-insensitive)
+      2) highest score
+      3) longest rally by shot span (shot_end_idx - shot_start_idx)
+      4) longest duration (end_ms - start_ms)
+    """
+    if best_shots_df.empty:
+        return best_shots_df
+
+    df = best_shots_df.copy()
+    df["short_description"] = df["short_description"].fillna("")
+    df["score"] = pd.to_numeric(df["score"], errors="coerce").fillna(0)
+    df["shot_start_idx"] = pd.to_numeric(df["shot_start_idx"], errors="coerce").fillna(0)
+    df["shot_end_idx"] = pd.to_numeric(df["shot_end_idx"], errors="coerce").fillna(0)
+    df["start_ms"] = pd.to_numeric(df["start_ms"], errors="coerce").fillna(0)
+    df["end_ms"] = pd.to_numeric(df["end_ms"], errors="coerce").fillna(0)
+
+    df["is_exciting"] = df["short_description"].str.contains("exciting exchange", case=False)
+    df["rally_span"] = (df["shot_end_idx"] - df["shot_start_idx"]).clip(lower=0)
+    df["duration_ms"] = (df["end_ms"] - df["start_ms"]).clip(lower=0)
+
+    df = df.sort_values(
+        by=["player_id", "is_exciting", "score", "rally_span", "duration_ms"],
+        ascending=[True, False, False, False, False],
+        kind="stable",
+    )
+
+    return df.groupby("player_id", as_index=False).head(1)
+
+def generate_hero_clips(best_shots_df: pd.DataFrame):
+    """Generate a single hero clip per player for PPT embedding."""
+    hero_rows = pick_best_shot_rows(best_shots_df)
+    if hero_rows.empty:
+        return
+
+    for _, row in hero_rows.iterrows():
+        start_ms = row.get("start_ms")
+        end_ms = row.get("end_ms")
+        player_id = row.get("player_id")
+        if pd.isna(start_ms) or pd.isna(end_ms) or pd.isna(player_id):
+            continue
+
+        start_ms = int(start_ms)
+        end_ms = int(end_ms)
+        player_id = int(float(player_id))
+
+        clip_start = max(0, start_ms - HERO_PAD_MS)
+        clip_end = end_ms + HERO_PAD_MS
+
+        hero_dir = os.path.join(OUTPUT_DIR, "players", normalize_player_id(player_id), "hero")
+        os.makedirs(hero_dir, exist_ok=True)
+        hero_path = os.path.join(hero_dir, HERO_CLIP_NAME)
+        compressed_path = os.path.join(hero_dir, f"compressed_{HERO_CLIP_NAME}")
+        raw_path = os.path.join(hero_dir, "hero_raw.mp4")
+        thumbnail_path = os.path.join(hero_dir, HERO_THUMBNAIL_NAME)
+
+        cmd = [
+            "ffmpeg",
+            "-ss", f"{clip_start/1000:.3f}",
+            "-to", f"{clip_end/1000:.3f}",
+            "-i", INPUT_VIDEO,
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-y",
+            raw_path,
+        ]
+        run_cmd(cmd)
+
+        if HERO_MODE == "static":
+            extract_midpoint_frame(raw_path, thumbnail_path)
+            if os.path.exists(raw_path):
+                os.remove(raw_path)
+            continue
+
+        compress_clip(raw_path, compressed_path)
+        os.replace(compressed_path, hero_path)
+        if os.path.exists(raw_path):
+            os.remove(raw_path)
+
+def stage_delivery_layout(output_dir, delivery_dir, session_id):
+    """Create a delivery staging layout with copied final reels."""
+    players_root = os.path.join(output_dir, "players")
+    if not os.path.isdir(players_root):
+        return
+
+    for player_dir in os.listdir(players_root):
+        if not player_dir.startswith("player_"):
+            continue
+
+        player_id = player_dir.split("_", 1)[1]
+        delivery_player_dir = os.path.join(delivery_dir, f"Player_{player_id}")
+        videos_dir = os.path.join(delivery_player_dir, "Videos")
+        reports_dir = os.path.join(delivery_player_dir, "Reports")
+        data_dir = os.path.join(delivery_player_dir, "Data")
+
+        os.makedirs(videos_dir, exist_ok=True)
+        os.makedirs(reports_dir, exist_ok=True)
+        os.makedirs(data_dir, exist_ok=True)
+
+        best_shots_src = os.path.join(players_root, player_dir, "best_shots", "best_shots.mp4")
+        if os.path.exists(best_shots_src):
+            shutil.copy2(best_shots_src, os.path.join(videos_dir, "Best_Shots.mp4"))
+
+        for highlight_type, dest_name in [
+            ("serve_context", "Serve_Context.mp4"),
+            ("return_context", "Return_Context.mp4"),
+        ]:
+            highlights_src = os.path.join(
+                players_root,
+                player_dir,
+                "sessions",
+                session_id,
+                "highlights",
+                highlight_type,
+                f"{highlight_type}_highlights.mp4",
+            )
+            if os.path.exists(highlights_src):
+                shutil.copy2(highlights_src, os.path.join(videos_dir, dest_name))
+
+        report_path = os.path.join(reports_dir, "player_report.pptx")
+        if not os.path.exists(report_path):
+            with open(report_path, "wb"):
+                pass
+
 # -----------------------
 # Load highlights
 # -----------------------
@@ -180,6 +373,9 @@ def main():
     if len(best_shots) == 0 and len(serve_return) == 0:
         print("⚠️ No highlights found in CSVs!")
         return
+
+    # Step 1: Generate a single hero clip per player for Slide 1 embedding
+    generate_hero_clips(best_shots)
     
     # Generate best-shot clips (PB Vision) - limited to top N per player
     best_shots_sorted = best_shots.sort_values(["player_id", "start_ms"], kind="stable")
@@ -349,6 +545,9 @@ def main():
     if CLEANUP_INTERMEDIATE:
         cleanup_all_videos(OUTPUT_DIR)
         cleanup_empty_directories(OUTPUT_DIR)
+
+    # Build delivery staging layout from final reels
+    stage_delivery_layout(OUTPUT_DIR, DELIVERY_DIR, SESSION_ID)
 
     # Save video links to JSON file for later use in PPT
     links_file = os.path.join(DATA_DIR, "video_links.json")

@@ -1,9 +1,10 @@
+import os
+from os import path
+
 import pandas as pd
 from pptx import Presentation
-from copy import deepcopy
-from os import path
-import json
 
+THUMBNAIL = "static"
 
 def replace_tokens_and_links(shape, token_map, link_map):
     """
@@ -90,96 +91,144 @@ def inject_kitchen_snapshot(prs, player_id, graphics_dir):
     
     print("Warning: Placeholder 'KITCHEN_SNAPSHOT' not found in the target slide")
 
+def inject_thumbnail(prs, player_id, media_dir):
+    """
+    Inject hero thumbnail into the slide titled "NethriQ Benchmarks" and
+    replace the image placeholder named "THUMBNAIL".
+    """
+    player_key = f"player_{int(player_id)}"
+    candidate_path = path.join(media_dir, "players", player_key, "hero", "hero_thumbnail.jpg")
+    image_path = candidate_path if path.exists(candidate_path) else None
+
+    if not image_path:
+        print(f"Warning: Thumbnail not found for {player_key}")
+        return
+
+    target_slide = None
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                slide_title = shape.text.strip()
+                if "NethriQ Benchmarks" in slide_title:
+                    target_slide = slide
+                    break
+        if target_slide:
+            break
+
+    if not target_slide:
+        print("Warning: Slide titled 'NethriQ Benchmarks' not found")
+        return
+
+    for shape in target_slide.shapes:
+        if shape.name == "THUMBNAIL":
+            left = shape.left
+            top = shape.top
+            width = shape.width
+            height = shape.height
+
+            shape._element.getparent().remove(shape._element)
+
+            target_slide.shapes.add_picture(
+                image_path,
+                left,
+                top,
+                width=width,
+                height=height
+            )
+            return
+
+    print("Warning: Placeholder 'THUMBNAIL' not found in the target slide")
+
+
 # ============================================================================
 # Set up file paths and load data
 # ============================================================================
 csv_path = path.join(path.dirname(path.abspath(__file__)), '..', 'data', 'player_data', 'player_averages.csv')
-ppt_template_path = path.join(path.dirname(path.abspath(__file__)),'..', 'node', 'mixed_doubles', 'NethriQ_Gautham.pptx')
-links_path = path.join(
-    path.dirname(path.abspath(__file__)),
-    '..', 'data', 'video_links.json'
-)
+ppt_template_path = path.join(path.dirname(path.abspath(__file__)), '..', 'node', 'mixed_doubles', 'NethriQ_Gautham.pptx')
 graphics_dir = path.join(
     path.dirname(path.abspath(__file__)),
     '..', 'data', 'graphics'
 )
+media_dir = path.join(
+    path.dirname(path.abspath(__file__)),
+    '..', 'data', 'nethriq_media'
+)
 
 df = pd.read_csv(csv_path)
-row = df[df["player_id"] == 0].iloc[0]
-
-with open(links_path, "r") as f:
-    video_links = json.load(f)
-
-# ============================================================================
-# Load PowerPoint template and create token replacement map
-# ============================================================================
-prs = Presentation(ppt_template_path)
-player_key = f"player_{int(row['player_id'])}"
 
 # Calculate overall grade from average of individual grades
 grade_to_num = {"Beginner": 0, "Intermediate": 1, "Advanced": 2, "Pro": 3}
 num_to_grade = {0: "Beginner", 1: "Intermediate", 2: "Advanced", 3: "Pro"}
 
-grade_values = [
-    grade_to_num.get(row["serve_depth_grade"], 0),
-    grade_to_num.get(row["serve_height_grade"], 0),
-    grade_to_num.get(row["serve_kitchen_grade"], 0),
-    grade_to_num.get(row["return_depth_grade"], 0),
-    grade_to_num.get(row["return_height_grade"], 0),
-    grade_to_num.get(row["return_kitchen_grade"], 0),
-]
-avg_grade_num = round(sum(grade_values) / len(grade_values))
-overall_grade = num_to_grade.get(avg_grade_num, "Intermediate")
-
-token_map = {
-    "{{PLAYER}}": row["player_name"] if pd.notna(row["player_name"]) else "Player",
-    "{{SERVE_DEPTH_VALUE}}": f"{row['serve_depth_avg']:.2f}",
-    "{{SERVE_DEPTH_GRADE}}": row["serve_depth_grade"],
-    "{{SERVE_HEIGHT_VALUE}}": f"{row['serve_height_avg']:.2f}",
-    "{{SERVE_HEIGHT_GRADE}}": row["serve_height_grade"],
-    "{{RETURN_DEPTH_VALUE}}": f"{row['return_depth_avg']:.2f}",
-    "{{RETURN_DEPTH_GRADE}}": row["return_depth_grade"],
-    "{{RETURN_HEIGHT_VALUE}}": f"{row['return_height_avg']:.2f}",
-    "{{RETURN_HEIGHT_GRADE}}": row["return_height_grade"],
-    "{{KAS}}": f"{row['serve_kitchen_pct'] * 100:.0f}",
-    "{{KAS_GRADE}}": row["serve_kitchen_grade"],
-    "{{KAR}}": f"{row['return_kitchen_pct'] * 100:.0f}",
-    "{{KAR_GRADE}}": row["return_kitchen_grade"],
-    "{{OVERALL_GRADE}}": overall_grade,
-    "{{BEST_SHOTS_VIDEO_LINK}}": "Best Shots",
-    "{{RETURN_VIDEO_LINK}}": "Returns in Game",
-    "{{SERVE_VIDEO_LINK}}": "Serves in Game"
+local_video_links = {
+    "{{BEST_SHOTS_VIDEO_LINK}}": path.join("..", "Videos", "Best_Shots.mp4"),
+    "{{BEST_SHOTS_VIDEO}}": path.join("..", "Videos", "Best_Shots.mp4"),
+    "{{RETURN_VIDEO_LINK}}": path.join("..", "Videos", "Return_Context.mp4"),
+    "{{SERVE_VIDEO_LINK}}": path.join("..", "Videos", "Serve_Context.mp4"),
 }
 
-token_map = {key: str(value) for key, value in token_map.items()}
+for _, row in df.iterrows():
+    if pd.isna(row.get("player_id")):
+        continue
 
-link_map = {
-    "{{BEST_SHOTS_VIDEO_LINK}}": video_links.get(
-        f"{player_key}_best_shots", {}
-    ).get("link"),
-    "{{RETURN_VIDEO_LINK}}": video_links.get(
-        f"{player_key}_return_context", {}
-    ).get("link"),
-    "{{SERVE_VIDEO_LINK}}": video_links.get(
-        f"{player_key}_serve_context", {}
-    ).get("link")
-}
+    player_id = int(float(row["player_id"]))
 
-# ============================================================================
-# Replace tokens in all slides
-# ============================================================================
-for slide in prs.slides:
-    for shape in slide.shapes:
-        replace_tokens_and_links(shape, token_map, link_map)
+    grade_values = [
+        grade_to_num.get(row["serve_depth_grade"], 0),
+        grade_to_num.get(row["serve_height_grade"], 0),
+        grade_to_num.get(row["serve_kitchen_grade"], 0),
+        grade_to_num.get(row["return_depth_grade"], 0),
+        grade_to_num.get(row["return_height_grade"], 0),
+        grade_to_num.get(row["return_kitchen_grade"], 0),
+    ]
+    avg_grade_num = round(sum(grade_values) / len(grade_values))
+    overall_grade = num_to_grade.get(avg_grade_num, "Intermediate")
 
-# ============================================================================
-# Inject kitchen snapshot image
-# ============================================================================
-inject_kitchen_snapshot(prs, row['player_id'], graphics_dir)
+    token_map = {
+        "{{PLAYER}}": row["player_name"] if pd.notna(row["player_name"]) else "Player",
+        "{{SERVE_DEPTH_VALUE}}": f"{row['serve_depth_avg']:.2f}",
+        "{{SERVE_DEPTH_GRADE}}": row["serve_depth_grade"],
+        "{{SERVE_HEIGHT_VALUE}}": f"{row['serve_height_avg']:.2f}",
+        "{{SERVE_HEIGHT_GRADE}}": row["serve_height_grade"],
+        "{{RETURN_DEPTH_VALUE}}": f"{row['return_depth_avg']:.2f}",
+        "{{RETURN_DEPTH_GRADE}}": row["return_depth_grade"],
+        "{{RETURN_HEIGHT_VALUE}}": f"{row['return_height_avg']:.2f}",
+        "{{RETURN_HEIGHT_GRADE}}": row["return_height_grade"],
+        "{{KAS}}": f"{row['serve_kitchen_pct'] * 100:.0f}",
+        "{{KAS_GRADE}}": row["serve_kitchen_grade"],
+        "{{KAR}}": f"{row['return_kitchen_pct'] * 100:.0f}",
+        "{{KAR_GRADE}}": row["return_kitchen_grade"],
+        "{{OVERALL_GRADE}}": overall_grade,
+        "{{BEST_SHOTS_VIDEO_LINK}}": "Best Shots",
+        "{{BEST_SHOTS_VIDEO}}": "Best Shots",
+        "{{RETURN_VIDEO_LINK}}": "Returns in Game",
+        "{{SERVE_VIDEO_LINK}}": "Serves in Game"
+    }
 
-# ============================================================================
-# Save output PowerPoint file
-# ============================================================================
-output_ppt_path = path.join(path.dirname(path.abspath(__file__)), '..', 'data', 'reports','player_report.pptx')
-prs.save(output_ppt_path)
-print(f"Generated {output_ppt_path}")
+    token_map = {key: str(value) for key, value in token_map.items()}
+
+    prs = Presentation(ppt_template_path)
+
+    # Replace tokens in all slides
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            replace_tokens_and_links(shape, token_map, local_video_links)
+
+    # Inject kitchen snapshot image
+    inject_kitchen_snapshot(prs, player_id, graphics_dir)
+    if THUMBNAIL == "static":
+        inject_thumbnail(prs, player_id, media_dir)
+
+    # Save output PowerPoint file
+    output_dir = path.join(
+        path.dirname(path.abspath(__file__)),
+        '..',
+        'data',
+        'delivery_staging',
+        f"Player_{player_id}",
+        'Reports'
+    )
+    os.makedirs(output_dir, exist_ok=True)
+    output_ppt_path = path.join(output_dir, 'player_report.pptx')
+    prs.save(output_ppt_path)
+    print(f"Generated {output_ppt_path}")
