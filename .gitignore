@@ -1,3 +1,8 @@
+.env
+.env.local
+*.key
+*.pem
+secrets/
 .venv/
 .vscode/
 __pycache__/
@@ -18,5 +23,6 @@ data/test_vids/*.mov
 data/test_vids/*.avi
 data/nethriq_media/
 data/*.json
+data/
 data/delivery_staging/
 client_secret_575025686798-040ts7jqu5q331cnmtatuqu49q987753.apps.googleusercontent.com.json
