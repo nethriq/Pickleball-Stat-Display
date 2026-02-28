@@ -1,10 +1,12 @@
 """UI-focused snapshots for player kitchen data."""
+import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from pathlib import Path
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+job_dir = os.environ.get("JOB_DATA_DIR", Path(__file__).parent.parent / "data")
+DATA_DIR = Path(job_dir)
 OUT_DIR = DATA_DIR / "graphics"
 OUT_DIR.mkdir(exist_ok=True)
 

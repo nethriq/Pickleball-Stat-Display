@@ -111,7 +111,9 @@ def dispatch_emails(delivery_records, email_lookup: dict, local_zip_dir, remote_
     return results
 
 if __name__ == "__main__":
-    local_zip_dir = "data/deliveries"
+    default_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
+    job_dir = os.environ.get("JOB_DATA_DIR", default_data_dir)
+    local_zip_dir = os.path.join(job_dir, "deliveries")
     remote_zip_dir = "deliveries"
     log_dir = os.path.join(local_zip_dir, "logs")
     os.makedirs(log_dir, exist_ok=True)

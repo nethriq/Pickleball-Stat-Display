@@ -13,6 +13,7 @@ Generates polished per-player analytics spreadsheets in Excel format with:
 
 import csv
 import json
+import os
 from pathlib import Path
 from typing import Dict, List
 import xlsxwriter
@@ -586,7 +587,8 @@ class SpreadsheetGenerator:
 
 def main():
     """Generate all player analytics spreadsheets."""
-    data_dir = Path(__file__).parent.parent / "data"
+    job_dir = os.environ.get("JOB_DATA_DIR", Path(__file__).parent.parent / "data")
+    data_dir = Path(job_dir)
     generator = SpreadsheetGenerator(str(data_dir))
     generator.generate_all()
 

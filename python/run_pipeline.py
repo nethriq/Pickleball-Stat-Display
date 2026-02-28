@@ -6,13 +6,11 @@ Executes: data processing → highlight generation → report creation.
 
 import sys
 import subprocess
+import json
+import os
 from pathlib import Path
-from kitchen_visualizer_ui import DATA_DIR
 
-BASE_DIR = Path(__file__).parent.parent
-DATA_DIR = BASE_DIR / "data"
-
-def run_stage(script_name, description):
+def run_stage(script_name, description, job_dir, video_url=None):
     """Run a pipeline stage and handle failures."""
     script_path = Path(__file__).parent / script_name
     if not script_path.exists():
@@ -22,9 +20,15 @@ def run_stage(script_name, description):
     print(f"▶️  {description}")
     print(f"{'='*60}\n")
     
+    env = os.environ.copy()
+    env["JOB_DATA_DIR"] = str(job_dir)
+    if video_url:
+        env["SOURCE_VIDEO_URL"] = video_url
+
     try:
         result = subprocess.run(
             [sys.executable, str(script_path)],
+            env=env,
             check=True,
             cwd=Path(__file__).parent
         )
@@ -34,91 +38,45 @@ def run_stage(script_name, description):
         print(f"\n❌ {description} failed with exit code {e.returncode}")
         return False
 
-def validate_output(output_paths):
-    """Check if expected output files were generated."""
-    print("🔍 Validating outputs...")
-    for output in output_paths:
-        if not output.exists():
-            print(f"   ❌ Missing output: {output}")
-            return False
-        print(f"   ✅ Output generated: {output}")
-    return True
+def run_pipeline(pbvision_json, job_directory, user_email, job_id, video_url=None):
+    """Entry point for the Celery task."""
+    print(f"🎬 NethriQ Analytics Pipeline for Job {job_id}")
+    print(f"📁 Isolated Job Directory: {job_directory}")
+    if video_url:
+        print(f"🎥 Source Video URL: {video_url}")
 
-def main():
-    """Execute full pipeline."""
-    print("🎬 NethriQ Analytics Pipeline")
-    print(f"📅 Running all stages...\n")
-    
+    job_dir_path = Path(job_directory)
+    job_dir_path.mkdir(parents=True, exist_ok=True)
+
+    input_json_path = job_dir_path / "pbvision_input.json"
+    with open(input_json_path, "w") as f:
+        json.dump(pbvision_json, f)
+
     stages = [
-        (
-            "process_match_data.py",
-            "Stage 1: Data Processing",
-            [
-                DATA_DIR / "player_data" / "player_averages.csv",
-                DATA_DIR / "player_data" / "highlight_registry.csv",
-                DATA_DIR / "player_data" / "shot_level_data.csv",
-                DATA_DIR / "player_data" / "kitchen_role_stats.csv",
-            ],
-        ),
-        (
-            "spreadsheet_generator.py",
-            "Stage 2: Spreadsheet Generation",
-            [
-                DATA_DIR / "delivery_staging" / "Reports",
-            ],
-        ),
-        (
-            "kitchen_visualizer_ui.py",
-            "Stage 3: Kitchen Visualization",
-            [
-                DATA_DIR / "graphics",
-            ],
-        ),
-        (
-            "video_clipper.py",
-            "Stage 4: Highlight Generation",
-            [
-                DATA_DIR / "video_links.json",
-            ],
-        ),
-        (
-            "ppt_injector.py",
-            "Stage 5: Report Creation",
-            [
-                DATA_DIR / "delivery_staging" / "Player_0" / "Reports" / "player_report.pptx",
-            ],
-        ),
-        (
-            "delivery_packager.py",
-            "Stage 6: Delivery Packaging",
-            [
-                DATA_DIR / "deliveries" / "logs",
-            ],
-        ),
+        ("process_match_data.py", "Stage 1: Data Processing"),
+        ("spreadsheet_generator.py", "Stage 2: Spreadsheet Generation"),
+        ("kitchen_visualizer_ui.py", "Stage 3: Kitchen Visualization"),
+        ("video_clipper.py", "Stage 4: Highlight Generation"),
+        ("ppt_injector.py", "Stage 5: Report Creation"),
+        ("delivery_packager.py", "Stage 6: Delivery Packaging"),
     ]
-    
-    for script, description, output_files in stages:
-        if not run_stage(script, description):
-            #All scripts are dependent, so stop on first failure
-            sys.exit(1)
-        """if not validate_output(output_files):
-            print(f"❌ Output validation failed for {description}")
-            sys.exit(1)"""
-    
+
+    for script, description in stages:
+        if not run_stage(script, description, job_dir_path, video_url):
+            raise RuntimeError(f"Pipeline execution failed at {description}")
+
     print("\n" + "="*60)
-    
-    print("✅ Full pipeline completed successfully!")
-    print("📊 Outputs:")
-    print(f"   - {DATA_DIR / 'player_averages.csv'}")
-    print(f"   - {DATA_DIR / 'highlight_registry.csv'}")
-    print(f"   - {DATA_DIR / 'shot_level_data.csv'}")
-    print(f"   - {DATA_DIR / 'kitchen_role_stats.csv'}")
-    print(f"   - player_*_analysis.xlsx (in {DATA_DIR / 'reports/'})")
-    print(f"   - kitchen_player_*.png (in {DATA_DIR / 'graphics/'})")
-    print(f"   - {DATA_DIR / 'video_links.json'}")
-    print(f"   - {DATA_DIR / 'delivery_staging' / 'Player_0' / 'Reports' / 'player_report.pptx'}")
-    print(f"   - delivery zips (in {DATA_DIR / 'deliveries/'})")
-    print(f"   - delivery upload logs (in {DATA_DIR / 'deliveries' / 'logs/'})")
+    print(f"✅ Full pipeline completed successfully for Job {job_id}!")
+
+    return {
+        "job_id": job_id,
+        "status": "SUCCESS",
+        "job_directory": job_directory,
+        "user_email": user_email,
+        "message": "All pipeline stages completed successfully.",
+    }
+
 
 if __name__ == "__main__":
-    main()
+    mock_job_dir = "/tmp/local_test_job"
+    run_pipeline({}, mock_job_dir, "test@example.com", "TEST-1", video_url=None)

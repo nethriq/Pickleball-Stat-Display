@@ -21,11 +21,15 @@ HERO_THUMBNAIL_NAME = "hero_thumbnail.jpg"
 HERO_PAD_MS = 300
 SESSION_ID = date.today().isoformat()
 BASE_DIR = os.path.dirname(__file__)
-DATA_DIR = os.path.join(BASE_DIR, "..", "data")
+job_dir = os.environ.get("JOB_DATA_DIR", os.path.join(BASE_DIR, "..", "data"))
+DATA_DIR = os.path.abspath(job_dir)
 OUTPUT_DIR = os.path.join(DATA_DIR, "nethriq_media")
 DELIVERY_DIR = os.path.join(DATA_DIR, "delivery_staging")
 
-INPUT_VIDEO = os.path.join(DATA_DIR, "test_vids" ,"test_video4.mp4")
+INPUT_VIDEO = os.environ.get("SOURCE_VIDEO_URL")
+if not INPUT_VIDEO:
+    print("⚠️ No SOURCE_VIDEO_URL provided! Using default test video. Update environment variable for production.")
+    INPUT_VIDEO = os.path.join(BASE_DIR, "data","test_vids","test_video3.mp4")
 BEST_SHOTS_CSV = os.path.join(DATA_DIR, "player_data", "player_best_shots.csv")
 SERVE_RETURN_CSV = os.path.join(DATA_DIR, "player_data", "highlight_registry.csv")
 PAD_MS = {

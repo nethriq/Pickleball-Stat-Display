@@ -6,7 +6,10 @@ secrets/
 .venv/
 .vscode/
 __pycache__/
+videos/
 *.pyc
+*.sqlite3
+*.rdb
 python/*.csv
 .python-version
 python/.ipynb_checkpoints/

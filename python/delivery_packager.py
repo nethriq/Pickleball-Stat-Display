@@ -7,13 +7,15 @@
 """
 import zipfile
 import json
+import os
 from pathlib import Path
 import shutil
 from datetime import datetime, timezone
 
 BASE_DIR = Path(__file__).parent.parent
-DELIVERY_STAGING = BASE_DIR / "data" / "delivery_staging"
-DELIVERY_OUT = BASE_DIR / "data" / "deliveries"
+job_dir = Path(os.environ.get("JOB_DATA_DIR", str(BASE_DIR / "data")))
+DELIVERY_STAGING = job_dir / "delivery_staging"
+DELIVERY_OUT = job_dir / "deliveries"
 LOG_DIR = DELIVERY_OUT / "logs"
 
 DELIVERY_OUT.mkdir(exist_ok=True)

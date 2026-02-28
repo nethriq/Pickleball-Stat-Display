@@ -143,16 +143,12 @@ def inject_thumbnail(prs, player_id, media_dir):
 # ============================================================================
 # Set up file paths and load data
 # ============================================================================
-csv_path = path.join(path.dirname(path.abspath(__file__)), '..', 'data', 'player_data', 'player_averages.csv')
+default_data_dir = path.join(path.dirname(path.abspath(__file__)), '..', 'data')
+job_dir = os.environ.get("JOB_DATA_DIR", default_data_dir)
+csv_path = path.join(job_dir, 'player_data', 'player_averages.csv')
 ppt_template_path = path.join(path.dirname(path.abspath(__file__)), '..', 'node', 'mixed_doubles', 'NethriQ_Gautham.pptx')
-graphics_dir = path.join(
-    path.dirname(path.abspath(__file__)),
-    '..', 'data', 'graphics'
-)
-media_dir = path.join(
-    path.dirname(path.abspath(__file__)),
-    '..', 'data', 'nethriq_media'
-)
+graphics_dir = path.join(job_dir, 'graphics')
+media_dir = path.join(job_dir, 'nethriq_media')
 
 df = pd.read_csv(csv_path)
 
@@ -220,14 +216,7 @@ for _, row in df.iterrows():
         inject_thumbnail(prs, player_id, media_dir)
 
     # Save output PowerPoint file
-    output_dir = path.join(
-        path.dirname(path.abspath(__file__)),
-        '..',
-        'data',
-        'delivery_staging',
-        f"Player_{player_id}",
-        'Reports'
-    )
+    output_dir = path.join(job_dir, 'delivery_staging', f"Player_{player_id}", 'Reports')
     os.makedirs(output_dir, exist_ok=True)
     output_ppt_path = path.join(output_dir, 'player_report.pptx')
     prs.save(output_ppt_path)

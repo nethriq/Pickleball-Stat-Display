@@ -97,10 +97,12 @@ python-crontab==3.3.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 python-json-logger==4.0.0
+python-lzf==0.2.6
 python-pptx==1.0.2
 pytz==2025.2
 PyYAML==6.0.3
 pyzmq==27.1.0
+rdbtools==0.1.15
 redis==7.2.0
 referencing==0.37.0
 requests==2.32.5

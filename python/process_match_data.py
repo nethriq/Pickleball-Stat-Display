@@ -6,6 +6,7 @@ Converts stats.json → shot/kitchen CSVs → highlight registry → player aver
 
 import json
 import csv
+import os
 import pandas as pd
 import sys
 from pathlib import Path
@@ -563,14 +564,28 @@ def stage_delivery_data(output_dir, data_dir, player_ids):
 def main():
     """Execute unified pipeline."""
     print("🎬 Starting unified match data processing...\n")
-    
-    data_dir = Path(__file__).parent.parent / 'data'
-    output_dir = data_dir / 'player_data'
-    stats_json = data_dir / 'stats' / "stats4.json"
-    
-    # Load raw data
-    print(f"📂 Loading {stats_json}...")
-    data_list = load_json_lines(stats_json)
+
+    job_dir_str = os.environ.get("JOB_DATA_DIR")
+    if not job_dir_str:
+        raise RuntimeError("JOB_DATA_DIR environment variable not set!")
+
+    job_dir = Path(job_dir_str)
+    output_dir = job_dir / "player_data"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_file_path = job_dir / "pbvision_input.json"
+
+    print(f"📂 Loading {json_file_path}...")
+    try:
+        with open(json_file_path, "r") as f:
+            match_data = json.load(f)
+    except FileNotFoundError:
+        print(f"❌ File not found: {json_file_path}")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"❌ Invalid JSON in {json_file_path}: {e}")
+        sys.exit(1)
+
+    data_list = match_data if isinstance(match_data, list) else [match_data]
     
     stats = find_object(data_list, "stats")
     insights = find_object(data_list, "insights") or {}
@@ -593,7 +608,7 @@ def main():
 
     if not player_avg_df.empty:
         player_ids = set(int(pid) for pid in player_avg_df["player_id"].dropna().unique())
-        stage_delivery_data(output_dir, data_dir, player_ids)
+        stage_delivery_data(output_dir, job_dir, player_ids)
     
     print(f"\n✅ Pipeline complete!")
     print(

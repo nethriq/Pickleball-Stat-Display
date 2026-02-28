@@ -1,47 +1,56 @@
 import express from 'express';
 import { PBVision } from '@pbvision/partner-sdk';
-import fs from 'fs';
-import path from 'path';
 
-const video = path.join(process.cwd(), "data", "test_video4.mp4");
 const app = express();
-app.use(express.json({limit: '50mb'}));
+app.use(express.json({ limit: '5mb' }));
 
 const pbv = new PBVision(process.env.PBVISION_API_KEY, { useProdServer: true });
 
-// 1. Tell PB Vision where to send the stats- Update every time you start the server
-await pbv.setWebhook('https://investable-columelliform-jonelle.ngrok-free.dev/webhook');
+const defaultWebhookBase = 'http://localhost:8000/api/webhook/pbvision';
 
-// 2. Create the endpoint to receive the stats
-app.post('/webhook', (req, res) => {
-    console.log('Webhook payload received:\n', JSON.stringify(req.body, null, 2));
+function buildWebhookUrl(jobId, webhookSecret) {
+    const base = process.env.DJANGO_WEBHOOK_BASE_URL || defaultWebhookBase;
+    const trimmedBase = base.replace(/\/$/, '');
+    const encodedJobId = encodeURIComponent(String(jobId));
+    const encodedToken = encodeURIComponent(String(webhookSecret));
+    return `${trimmedBase}/${encodedJobId}/?token=${encodedToken}`;
+}
 
-    const { stats, cv, vid } = req.body;
+app.post('/api/process-video', async (req, res) => {
+    const { jobId, videoUrl, webhookSecret } = req.body || {};
 
-    if (stats) {
-        console.log(`Stats received for video ${vid}:`, stats);
+    if (!jobId || !videoUrl || !webhookSecret) {
+        return res.status(400).json({
+            status: 'error',
+            message: 'Missing required fields: jobId, videoUrl, webhookSecret',
+        });
     }
 
-    // Append webhook data to JSON file in data directory
-    const dataDir = path.join(process.cwd(), "data");
-    const filePath = path.join(dataDir, 'stats4.json');
-    const data = { timestamp: new Date().toISOString(), payload: req.body };
-    
-    fs.appendFileSync(filePath, JSON.stringify(data) + '\n');
-    console.log(`Appended stats to ${filePath}`);
-    res.sendStatus(200);
+    try {
+        const webhookUrl = buildWebhookUrl(jobId, webhookSecret);
+        
+        const optionalMetadata = {
+            name: `job_${jobId}`,
+            userEmails: [],
+            gameStartEpoch: Math.floor(Date.now() / 1000),
+        };
+
+        console.log(`[Job ${jobId}] Registering webhook URL...`);
+        await pbv.setWebhook(webhookUrl);
+
+        console.log(`[Job ${jobId}] Starting PB Vision upload for: ${videoUrl}`);
+        await pbv.uploadVideo(videoUrl, optionalMetadata);
+
+        console.log(`[Job ${jobId}] Upload finished successfully.`);
+        return res.status(200).json({ status: 'upload_finished', jobId });
+        
+    } catch (error) {
+        console.error(`[Job ${jobId}] Error starting PB Vision upload:`, error);
+        return res.status(500).json({
+            status: 'error',
+            message: error.message || 'Failed to start upload',
+        });
+    }
 });
 
-
-app.listen(3000, () => console.log('Webhook server running on port 3000'));
-
-const optionalMetadata = {
-    name: 'Test_1',
-    userEmails: [],
-    gameStartEpoch: Math.floor(Date.now() / 1000)
-};
-
-// This starts the process. The stats will arrive at your webhook later.
-await pbv.uploadVideo(video, optionalMetadata);
-
-console.log("Video uploaded! Processing usually takes a few minutes.");
+app.listen(3000, () => console.log('Node gateway running on port 3000'));
