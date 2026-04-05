@@ -19,21 +19,37 @@ urlpatterns = [
     # ========================================================================
     path('api/register/', views.register, name='register'),
     path('api/login/', views.login, name='login'),
+    path('api/auth/claim-verify/', views.claim_verify, name='claim_verify'),
+    path('api/auth/set-password/', views.set_password, name='set_password'),
+    path('api/auth/resend-claim/', views.resend_stub_claim, name='resend_stub_claim'),
     
     # ========================================================================
     # Upload & Job Management Endpoints
     # ========================================================================
     path('api/upload/', views.upload_video, name='upload_video'),
     path('api/jobs/', views.list_jobs, name='list_jobs'),
+    path('api/jobs/global/', views.list_global_jobs, name='list_global_jobs'),
     path('api/jobs/<int:job_id>/status/', views.get_job_status, name='get_job_status'),
     path('api/jobs/<int:job_id>/download/', views.download_job_results, name='download_job_results'),
     path('api/jobs/<int:job_id>/download-zip/<str:zip_id>/', views.download_job_zip, name='download_job_zip'),
     path('api/jobs/<int:job_id>/download-all/', views.download_job_all, name='download_job_all'),
+    path('api/players/search/', views.search_players, name='search_players'),
+    path('api/players/stub/', views.create_player_stub, name='create_player_stub'),
     
     # ========================================================================
     # Webhook Endpoint
     # ========================================================================
     path('api/webhook/pbvision/<int:job_id>/', views.pbvision_webhook, name='pbvision_webhook'),
+    
+    # ========================================================================
+    # Internal Node Server Endpoints
+    # ========================================================================
+    path('api/internal/jobs/<int:job_id>/save-results/', views.save_pbvision_results_internal, name='save_pbvision_results_internal'),
+    
+    # ========================================================================
+    # Player Selection & Processing Endpoints
+    # ========================================================================
+    path('api/jobs/<int:job_id>/select-player/', views.select_player_and_process, name='select_player_and_process'),
     
     # ========================================================================
     # Health & Debug Endpoints

@@ -11,11 +11,10 @@ Generates polished per-player analytics spreadsheets in Excel format with:
 - Raw shot data (hidden sheet)
 """
 
-import csv
 import json
 import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 import xlsxwriter
 
 
@@ -29,12 +28,13 @@ class SpreadsheetGenerator:
         "Beginner": "#EF4444",      # Red
     }
 
-    def __init__(self, data_dir: str, output_dir: str = None):
+    def __init__(self, data_dir: str, stage1_output: Dict[str, Any], output_dir: Optional[str] = None):
         """
-        Initialize generator with data directory.
+        Initialize generator with in-memory DataFrames from Stage 1.
         
         Args:
-            data_dir: Directory containing CSV files
+            data_dir: Job directory for outputs and optional metadata
+            stage1_output: Dict returned by process_match_data containing DataFrames
             output_dir: Output directory for Excel files (defaults to delivery_staging/Reports in parent)
         """
         self.data_dir = Path(data_dir)
@@ -45,11 +45,14 @@ class SpreadsheetGenerator:
             self.output_dir = Path(output_dir)
             self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Load data
-        self.player_averages = self._load_csv("player_data/player_averages.csv")
-        self.shot_level_data = self._load_csv("player_data/shot_level_data.csv")
-        self.kitchen_role_stats = self._load_csv("player_data/kitchen_role_stats.csv")
-        self.player_best_shots = self._load_csv("player_data/player_best_shots.csv")
+        if not isinstance(stage1_output, dict):
+            raise ValueError("stage1_output must be a dict from process_match_data")
+
+        # Use DataFrames from stage 1 directly; do not read player_data CSVs.
+        self.player_averages = self._df_to_records(stage1_output.get("player_avg_df"))
+        self.shot_level_data = self._df_to_records(stage1_output.get("shot_df"))
+        self.kitchen_role_stats = self._df_to_records(stage1_output.get("kitchen_df"))
+        self.player_best_shots = self._df_to_records(stage1_output.get("best_shots_df"))
         self.video_links = self._load_video_links()
 
     def _load_video_links(self) -> Dict:
@@ -63,17 +66,16 @@ class SpreadsheetGenerator:
         except (json.JSONDecodeError, OSError):
             return {}
 
-    def _load_csv(self, filename: str) -> List[Dict]:
-        """Load CSV file into list of dictionaries."""
-        filepath = self.data_dir / filename
-        data = []
-        try:
-            with open(str(filepath), "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                data = list(reader)
-        except FileNotFoundError:
-            print(f"Warning: {filename} not found at {filepath}")
-        return data
+    def _df_to_records(self, df) -> List[Dict]:
+        """Convert a pandas DataFrame-like object into list-of-dict records."""
+        if df is None:
+            return []
+        if hasattr(df, "to_dict"):
+            obj = df.astype(object)
+            return obj.where(obj.notna(), other=None).to_dict(orient="records")
+        if isinstance(df, list):
+            return df
+        raise ValueError("Expected DataFrame-like object with to_dict(orient='records')")
 
     def _get_player_data(self, player_id: int) -> Dict:
         """Extract player-specific data from all sources."""
@@ -585,13 +587,41 @@ class SpreadsheetGenerator:
             self.generate(player_id)
 
 
-def main():
-    """Generate all player analytics spreadsheets."""
-    job_dir = os.environ.get("JOB_DATA_DIR", Path(__file__).parent.parent / "data")
-    data_dir = Path(job_dir)
-    generator = SpreadsheetGenerator(str(data_dir))
-    generator.generate_all()
+def generate_spreadsheets(job_directory, selected_player_index=None, stage1_output: Optional[Dict[str, Any]] = None):
+    """
+    Generate analytics spreadsheets.
+    
+    Args:
+        job_directory: Path to job output directory (str or Path)
+        selected_player_index: User's selected player (0-3), optional
+        stage1_output: Dict returned by process_match_data containing DataFrames
+    
+    Returns:
+        dict: Summary of generated spreadsheets
+    """
+    print("📊 Starting spreadsheet generation...\n")
+    
+    job_dir = Path(job_directory)
+    if stage1_output is None:
+        raise ValueError("stage1_output is required and must be the return value of process_match_data")
 
+    generator = SpreadsheetGenerator(str(job_dir), stage1_output=stage1_output)
 
-if __name__ == "__main__":
-    main()
+    if selected_player_index is not None:
+        try:
+            selected_player_id = int(selected_player_index)
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid selected_player_index: {selected_player_index}")
+
+        print(f"🎯 Generating spreadsheet only for player_{selected_player_id}")
+        generator.generate(selected_player_id)
+    else:
+        generator.generate_all()
+    
+    print(f"\n✅ Spreadsheet generation complete!")
+    
+    return {
+        'spreadsheets_generated': True,
+        'selected_player_index': selected_player_index,
+        'output_dir': str(job_dir)
+    }

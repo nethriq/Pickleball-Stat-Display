@@ -7,10 +7,13 @@ import zipfile
 from datetime import datetime
 from celery import shared_task
 from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
 from .models import VideoJob
+from python.email_dispatcher import send_delivery_email_with_attachments
 
 logger = logging.getLogger(__name__)
 
+PRESERVE_SOURCE_VIDEO = os.getenv('PRESERVE_SOURCE_VIDEO', 'false').lower() == 'true'
 CLEANUP_ON_DELIVERY = os.getenv('CLEANUP_ON_DELIVERY', 'false').lower() == 'true'
 
 # Retry configuration: exponential backoff, max 3 attempts
@@ -21,6 +24,57 @@ RETRY_KWARGS = {
     'retry_backoff_max': 600,  # 10 minutes max backoff
     'retry_jitter': True,
 }
+
+
+@shared_task(bind=True, **RETRY_KWARGS)
+def send_stub_claim_email(self, recipient_email, player_name, claim_url):
+    """Send a branded claim-account email asynchronously for newly created stubs."""
+    club_name = getattr(settings, 'CLUB_NAME', 'PB Vision Athletics')
+    subject = f"Your match at {club_name} is ready"
+
+    text_body = (
+        f"Hi {player_name},\n\n"
+        f"Your match at {club_name} has been analyzed by PB Vision.\n"
+        "Use this one-time secure link to claim your account and view your stats:\n\n"
+        f"{claim_url}\n\n"
+        "This link expires in 24 hours.\n\n"
+        "If you were not expecting this, you can ignore this email."
+    )
+
+    html_body = (
+        f"<div style='font-family:Arial,sans-serif;line-height:1.5;color:#1b1f23;'>"
+        f"<h2 style='margin-bottom:8px;'>Your stats are ready at {club_name}</h2>"
+        f"<p>Hi {player_name},</p>"
+        "<p>Your match has been analyzed by PB Vision. "
+        "Click below to claim your account and view your stats.</p>"
+        f"<p><a href='{claim_url}' "
+        "style='display:inline-block;padding:10px 16px;background:#0d6efd;color:#ffffff;"
+        "text-decoration:none;border-radius:6px;font-weight:600;'>Claim Account</a></p>"
+        "<p style='margin-top:12px;'>This one-time link expires in 24 hours.</p>"
+        "<p style='font-size:12px;color:#5a5f66;'>"
+        "If the button does not work, copy and paste this URL into your browser:</p>"
+        f"<p style='font-size:12px;color:#5a5f66;word-break:break-all;'>{claim_url}</p>"
+        "</div>"
+    )
+
+    message = EmailMultiAlternatives(
+        subject=subject,
+        body=text_body,
+        from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', None),
+        to=[recipient_email],
+    )
+    message.attach_alternative(html_body, 'text/html')
+    sent = message.send(fail_silently=False)
+
+    logger.info(
+        f"[StubClaimEmail] sent={sent} recipient={recipient_email} club={club_name}"
+    )
+    return {
+        'status': 'sent' if sent > 0 else 'failed_send',
+        'recipient': recipient_email,
+        'club_name': club_name,
+        'attempted_at': datetime.now().isoformat(),
+    }
 
 
 @shared_task(bind=True, **RETRY_KWARGS)
@@ -73,27 +127,38 @@ def upload_to_pbvision(self, job_id, file_url):
 
 
 @shared_task(bind=True, **RETRY_KWARGS)
-def process_pbvision_results(self, job_id, pbvision_json):
+def process_pbvision_results(self, job_id):
     """
     Task 2: Process PB Vision JSON output through Python pipeline.
     
-    Triggered by Django webhook endpoint once PB Vision callback arrives.
-    Creates isolated job directory, runs pipeline orchestrator, and saves results.
+    Triggered after user selects their player index.
+    Fetches pbvision_response and selected_player_index from database,
+    creates isolated job directory, runs pipeline orchestrator, and saves results.
     
     Args:
         job_id: VideoJob primary key
-        pbvision_json: JSON response from PB Vision webhook
     
     Returns:
         dict: Pipeline output summary
     """
     try:
         job = VideoJob.objects.get(id=job_id)
-        logger.info(f"[Job {job_id}] Starting Python pipeline with PB Vision data")
+        logger.info(f"[Job {job_id}] Starting Python pipeline with PB Vision data from database")
         
-        # Store PB Vision response for reference
-        job.result_json = pbvision_json
-        job.save()
+        # Fetch PB Vision response from database
+        pbvision_json = job.pbvision_response
+        if not pbvision_json:
+            raise ValueError(f"Job {job_id} has no pbvision_response in database")
+        
+        # Fetch selected player index
+        selected_player_index = job.selected_player_index
+        if selected_player_index is None:
+            raise ValueError(f"Job {job_id} has no selected_player_index")
+        
+        logger.info(
+            f"[Job {job_id}] Fetched data from database: "
+            f"selected_player_index={selected_player_index}"
+        )
         
         # Create isolated job directory
         job_dir = os.path.join(settings.BASE_DIR, 'data', f'job_{job_id}')
@@ -117,18 +182,18 @@ def process_pbvision_results(self, job_id, pbvision_json):
             job_directory=job_dir,
             user_email=job.user.email,
             job_id=job_id,
-            video_url=source_video_url  # <-- NEW ARGUMENT
+            video_url=source_video_url,
+            selected_player_index=selected_player_index  # Pass the user's selection
         )
         logger.info(f"[Job {job_id}] Pipeline output summary: {pipeline_output}")
         logger.info(f"[Job {job_id}] Pipeline completed successfully")
         
-        # Store results
+        # Store intermediate pipeline results.
+        # Do not mark COMPLETED yet; deliver_results will finalize deliverables first.
         job.result_json = {
             'pbvision': pbvision_json,
             'pipeline_output': pipeline_output,
         }
-        job.completed_at = datetime.now()
-        job.status = 'COMPLETED'
         job.save()
         
         # Chain to next task: deliver_results
@@ -150,10 +215,10 @@ def process_pbvision_results(self, job_id, pbvision_json):
 @shared_task(bind=True)
 def deliver_results(self, job_id):
     """
-    Task 3: Email user and upload final ZIP package to S3.
+    Task 3: Finalize deliverables and dispatch completion email.
     
     Called after process_pbvision_results completes (chained task).
-    Handles delivery of results and cleanup.
+    Handles final packaging metadata, best-effort email delivery, and cleanup.
     
     Args:
         job_id: VideoJob primary key
@@ -181,30 +246,109 @@ def deliver_results(self, job_id):
         master_zip = _create_master_zip(zipfiles, deliveries_dir)
 
         result_payload = job.result_json or {}
+        deliverables_payload = result_payload.get('deliverables') or {}
+
+        existing_email_delivery = deliverables_payload.get('email_delivery')
+        email_already_sent = (
+            isinstance(existing_email_delivery, dict)
+            and existing_email_delivery.get('status') == 'sent'
+        )
+
+        email_enabled = getattr(settings, 'EMAIL_DELIVERY_ENABLED', True)
+        max_attachment_bytes = getattr(
+            settings,
+            'EMAIL_DELIVERY_MAX_ATTACHMENT_BYTES',
+            25 * 1024 * 1024,
+        )
+
+        if not email_enabled:
+            email_delivery = {
+                'status': 'skipped_disabled',
+                'recipient': user_email,
+                'attempted_at': datetime.now().isoformat(),
+                'sent_at': None,
+                'error': 'email_delivery_disabled',
+            }
+        elif email_already_sent:
+            email_delivery = existing_email_delivery
+            logger.info(f"[Job {job_id}] Skipping email dispatch: already sent")
+        else:
+            try:
+                email_delivery = send_delivery_email_with_attachments(
+                    recipient_email=user_email,
+                    zipfiles=zipfiles,
+                    job_id=job.id,
+                    job_name=job.name,
+                    selected_player_index=job.selected_player_index,
+                    from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', None),
+                    max_total_attachment_bytes=max_attachment_bytes,
+                )
+                logger.info(
+                    f"[Job {job_id}] Email delivery status={email_delivery.get('status')} "
+                    f"recipient={user_email}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[Job {job_id}] Email delivery failed unexpectedly: {str(e)}",
+                    exc_info=True,
+                )
+                email_delivery = {
+                    'status': 'failed_send',
+                    'recipient': user_email,
+                    'attempted_at': datetime.now().isoformat(),
+                    'sent_at': None,
+                    'error': str(e),
+                    'job_id': job.id,
+                    'job_name': job.name,
+                    'selected_player_index': job.selected_player_index,
+                }
+
         result_payload['deliverables'] = {
+            **deliverables_payload,
             'zipfiles': zipfiles,
             'master_zip': master_zip,
             'generated_at': datetime.now().isoformat(),
+            'email_delivery': email_delivery,
         }
         job.result_json = result_payload
+        job.completed_at = datetime.now()
+        job.status = 'COMPLETED'
+
+        if job.video_file and not PRESERVE_SOURCE_VIDEO:
+            try:
+                job.video_file.delete(save=False)
+                job.video_file = ''
+                job.video_url = None
+                logger.info(f"[Job {job_id}] Deleted source video from storage after successful delivery")
+            except Exception:
+                logger.warning(f"[Job {job_id}] Failed to delete source video", exc_info=True)
+        elif job.video_file:
+            logger.info(f"[Job {job_id}] Preserving source video (PRESERVE_SOURCE_VIDEO=true)")
 
         if CLEANUP_ON_DELIVERY:
-            if job.video_file:
-                try:
-                    job.video_file.delete(save=False)
-                    logger.info(f"[Job {job_id}] Deleted source video from local storage")
-                except Exception:
-                    logger.warning(f"[Job {job_id}] Failed to delete source video", exc_info=True)
-
             _cleanup_job_temp_dirs(job_dir)
         else:
-            logger.info(f"[Job {job_id}] Cleanup disabled (CLEANUP_ON_DELIVERY=false)")
+            logger.info(f"[Job {job_id}] Temp directory cleanup disabled (CLEANUP_ON_DELIVERY=false)")
 
-        job.logs += f'\n[{datetime.now().isoformat()}] Delivery task completed'
+        email_status = email_delivery.get('status') if isinstance(email_delivery, dict) else 'unknown'
+        email_error = email_delivery.get('error') if isinstance(email_delivery, dict) else None
+        log_suffix = f" email_status={email_status}"
+        if email_error:
+            log_suffix += f" email_error={email_error}"
+
+        job.logs += f'\n[{datetime.now().isoformat()}] Delivery task completed;{log_suffix}'
         job.save()
 
-        logger.info(f"[Job {job_id}] Delivery completed")
-        return {'status': 'delivered', 'job_id': job_id, 'zip_count': len(zipfiles)}
+        logger.info(
+            f"[Job {job_id}] Delivery completed zip_count={len(zipfiles)} "
+            f"email_status={email_status}"
+        )
+        return {
+            'status': 'delivered',
+            'job_id': job_id,
+            'zip_count': len(zipfiles),
+            'email_status': email_status,
+        }
         
     except VideoJob.DoesNotExist:
         logger.error(f"[Job {job_id}] Job not found in database")

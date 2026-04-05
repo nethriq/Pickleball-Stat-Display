@@ -6,7 +6,7 @@ secrets/
 .venv/
 .vscode/
 __pycache__/
-videos/
+media/
 *.pyc
 *.sqlite3
 *.rdb
@@ -16,6 +16,7 @@ python/.ipynb_checkpoints/
 Sprint.md
 node/node_modules/
 nethriq_info.txt
+nethriq/migrations
 ngrok_install.sh
 node/ngrok-v3-stable-linux-amd64.tgz
 node/mixed_doubles/

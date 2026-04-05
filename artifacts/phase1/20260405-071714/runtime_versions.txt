@@ -1,0 +1,6 @@
+timestamp=20260405-071714
+cwd=/home/adi/Documents/Academics/Internships/nethriq
+python=Python 3.11.7
+node=v25.9.0
+npm=11.12.1
+ffmpeg=ffmpeg version n8.1 Copyright (c) 2000-2026 the FFmpeg developers

@@ -99,6 +99,44 @@ body {
     color: #856404;
 }
 
+/* Player Thumbnail Selection */
+.player-thumbnail {
+    transition: all 0.3s ease;
+    border: 3px solid transparent;
+}
+
+.player-thumbnail:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 16px rgba(0, 123, 255, 0.3);
+    border-color: var(--primary-color);
+}
+
+.player-thumbnail img {
+    width: 100%;
+    height: auto;
+    object-fit: cover;
+    border-radius: 4px 4px 0 0;
+}
+
+.player-thumbnail .card-body {
+    padding: 0.5rem;
+    background-color: #f8f9fa;
+}
+
+#player-search-results {
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+#player-search-results .list-group-item {
+    cursor: pointer;
+}
+
+#global-jobs-table-container table td,
+#global-jobs-table-container table th {
+    vertical-align: middle;
+}
+
 .alert-danger {
     background-color: #f8d7da;
     color: #721c24;

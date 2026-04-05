@@ -3,16 +3,13 @@ import os
 import subprocess
 from collections import defaultdict
 from datetime import date
-import json
-import time
+from pathlib import Path
 import shutil
-# -----------------------
-# Configuration
-# -----------------------
+# Configuration: These are now function parameters instead of module-level constants
+# to support in-memory processing without environment variable race conditions
 DRY_RUN = False
-HERO_MODE="static" #Options: "video" (generate hero clips) or "static" (use a placeholder image for hero slide)
-UPLOAD=False
-CLEANUP_INTERMEDIATE=True
+HERO_MODE = "static"  # Options: "video" (generate hero clips) or "static" (use a placeholder image for hero slide)
+CLEANUP_INTERMEDIATE = True
 MAX_BEST_SHOT_CLIPS = 10
 MAX_SERVE_CLIPS = 10
 MAX_RETURN_CLIPS = 10
@@ -20,23 +17,17 @@ HERO_CLIP_NAME = "hero_clip.mp4"
 HERO_THUMBNAIL_NAME = "hero_thumbnail.jpg"
 HERO_PAD_MS = 300
 SESSION_ID = date.today().isoformat()
-BASE_DIR = os.path.dirname(__file__)
-job_dir = os.environ.get("JOB_DATA_DIR", os.path.join(BASE_DIR, "..", "data"))
-DATA_DIR = os.path.abspath(job_dir)
-OUTPUT_DIR = os.path.join(DATA_DIR, "nethriq_media")
-DELIVERY_DIR = os.path.join(DATA_DIR, "delivery_staging")
 
-INPUT_VIDEO = os.environ.get("SOURCE_VIDEO_URL")
-if not INPUT_VIDEO:
-    print("⚠️ No SOURCE_VIDEO_URL provided! Using default test video. Update environment variable for production.")
-    INPUT_VIDEO = os.path.join(BASE_DIR, "data","test_vids","test_video3.mp4")
-BEST_SHOTS_CSV = os.path.join(DATA_DIR, "player_data", "player_best_shots.csv")
-SERVE_RETURN_CSV = os.path.join(DATA_DIR, "player_data", "highlight_registry.csv")
+# Default paths (used only if called via legacy main())
+BASE_DIR = os.path.dirname(__file__)
+DEFAULT_JOB_DIR = os.path.join(BASE_DIR, "..", "data")
+DEFAULT_VIDEO_URL = os.path.join(BASE_DIR, "data", "test_vids", "test_video3.mp4")
+
 PAD_MS = {
-    "serve_context":   300,
-    "return_context":  300,
-    "result_context":  300,
-    "highlight":       1000,  # Generic padding for quality highlights
+    "serve_context": 300,
+    "return_context": 300,
+    "result_context": 300,
+    "highlight": 1000,  # Generic padding for quality highlights
 }
 
 # -----------------------
@@ -90,91 +81,6 @@ def cleanup_empty_directories(root_dir):
                 pass
     if removed > 0:
         print(f"🧹 Deleted {removed} empty directories")
-
-def upload_video_to_drive(list_file, rclone_path, link_key):
-    """
-    Upload a video to Google Drive via rclone and get a shareable link.
-    
-    Args:
-        list_file: Path to the ffmpeg concat list file
-        rclone_path: Destination path on rclone remote (e.g., nethriq_drive:path/to/video.mp4)
-        link_key: Descriptive key for storing the link (e.g., player_2_serve_context)
-    
-    Returns:
-        tuple: (success: bool, shareable_link: str or None)
-    """
-    if DRY_RUN:
-        return True, "https://drive.google.com/file/d/DRY_RUN_ID/view"
-    
-    try:
-        # Setup ffmpeg command
-        ffmpeg_cmd = [
-            "ffmpeg", "-loglevel", "error", "-f", "concat", "-safe", "0",
-            "-i", list_file,
-            "-c", "copy",
-            "-movflags", "frag_keyframe+empty_moov",
-            "-f", "mp4", "pipe:1"
-        ]
-        
-        # Setup rclone command with increased verbosity for progress
-        rclone_cmd = [
-            "rclone", "rcat", "-v", rclone_path
-        ]
-        
-        print(" ".join(ffmpeg_cmd) + " | " + " ".join(rclone_cmd))
-        print(f"⏳ Uploading {link_key}...")
-        
-        # Pipe ffmpeg output to rclone
-        p1 = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        p2 = subprocess.Popen(rclone_cmd, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if p1.stdout:
-            p1.stdout.close()
-        
-        spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-        spinner_idx = 0
-        
-        # Wait for both processes with spinner
-        while p2.poll() is None:
-            print(f"\r  {spinner[spinner_idx % len(spinner)]} uploading...", end='', flush=True)
-            spinner_idx += 1
-            time.sleep(0.1)
-        
-        print("\r                           ", end='\r', flush=True)
-        
-        # Get any remaining output
-        p1_returncode = p1.wait()
-        p2_returncode = p2.returncode
-        
-        # Check for errors
-        if p1_returncode != 0:
-            p1_stderr = p1.stderr.read().decode('utf-8', errors='ignore') if p1.stderr else ""
-            print(f"⚠️ ffmpeg error: {p1_stderr}")
-            return False, None
-        
-        if p2_returncode != 0:
-            p2_stderr = p2.stderr.read() if p2.stderr else ""
-            print(f"⚠️ rclone error: {p2_stderr}")
-            return False, None
-        
-        print(f"✅ Upload complete for {link_key}")
-        
-        # Get shareable link from rclone
-        link_cmd = f"rclone link {rclone_path}"
-        result = subprocess.run(link_cmd, shell=True, capture_output=True, text=True, check=True, timeout=30)
-        shareable_link = result.stdout.strip()
-        
-        print(f"✅ Link for {link_key}: {shareable_link}")
-        return True, shareable_link
-        
-    except subprocess.TimeoutExpired:
-        print(f"⚠️ Timeout while getting link for {rclone_path}")
-        return False, None
-    except subprocess.CalledProcessError as e:
-        print(f"⚠️ Failed to get link for {rclone_path}: {e.stderr}")
-        return False, None
-    except Exception as e:
-        print(f"⚠️ Unexpected error for {link_key}: {str(e)}")
-        return False, None
 
 def compress_clip(input_path: str, output_path: str):
     """Compress a clip for lightweight PPT embedding."""
@@ -257,7 +163,7 @@ def pick_best_shot_rows(best_shots_df: pd.DataFrame) -> pd.DataFrame:
 
     return df.groupby("player_id", as_index=False).head(1)
 
-def generate_hero_clips(best_shots_df: pd.DataFrame):
+def generate_hero_clips(best_shots_df: pd.DataFrame, output_dir: str, video_url: str):
     """Generate a single hero clip per player for PPT embedding."""
     hero_rows = pick_best_shot_rows(best_shots_df)
     if hero_rows.empty:
@@ -277,7 +183,7 @@ def generate_hero_clips(best_shots_df: pd.DataFrame):
         clip_start = max(0, start_ms - HERO_PAD_MS)
         clip_end = end_ms + HERO_PAD_MS
 
-        hero_dir = os.path.join(OUTPUT_DIR, "players", normalize_player_id(player_id), "hero")
+        hero_dir = os.path.join(output_dir, "players", normalize_player_id(player_id), "hero")
         os.makedirs(hero_dir, exist_ok=True)
         hero_path = os.path.join(hero_dir, HERO_CLIP_NAME)
         compressed_path = os.path.join(hero_dir, f"compressed_{HERO_CLIP_NAME}")
@@ -288,7 +194,7 @@ def generate_hero_clips(best_shots_df: pd.DataFrame):
             "ffmpeg",
             "-ss", f"{clip_start/1000:.3f}",
             "-to", f"{clip_end/1000:.3f}",
-            "-i", INPUT_VIDEO,
+            "-i", video_url,
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-crf", "23",
@@ -356,33 +262,84 @@ def stage_delivery_layout(output_dir, delivery_dir, session_id):
                 pass
 
 # -----------------------
-# Load highlights
+# Load highlights (legacy: for backwards compatibility)
 # -----------------------
-best_shots = pd.read_csv(BEST_SHOTS_CSV)
-serve_return = pd.read_csv(SERVE_RETURN_CSV)
+best_shots = None
+serve_return = None
+
+
+def _load_highlight_csvs(job_directory):
+    """Load best shots and serve/return CSVs from job directory."""
+    global best_shots, serve_return
+    
+    data_dir = str(job_directory)
+    best_shots_csv = os.path.join(data_dir, "player_data", "player_best_shots.csv")
+    serve_return_csv = os.path.join(data_dir, "player_data", "highlight_registry.csv")
+    
+    best_shots = pd.read_csv(best_shots_csv)
+    serve_return = pd.read_csv(serve_return_csv)
+
 
 # -----------------------
 # Concatenate reels
 # -----------------------
-def main():
-    """Main orchestration function for generating and uploading highlight reels."""
-    best_shot_reels = defaultdict(list)
-    serve_return_clips = defaultdict(list)
-    list_files = []  # Track concat list files for cleanup
-    video_links = {}  # Store rclone links for PPT placeholders
+def generate_highlights(job_directory, video_url, selected_player_index=None):
+    """
+    Generate highlight reels for all players.
     
-    print(f"📋 Total best shot segments: {len(best_shots)}")
-    print(f"📋 Total serve/return highlights: {len(serve_return)}")
+    Args:
+        job_directory: Path to job output directory (str or Path)
+        video_url: URL or path to source video file
+        selected_player_index: User's selected player (0-3), optional
     
-    if len(best_shots) == 0 and len(serve_return) == 0:
-        print("⚠️ No highlights found in CSVs!")
+    Returns:
+        dict: Summary of generated highlights
+    """
+    print("🎬 Starting highlight generation...\n")
+    
+    job_dir = Path(job_directory)
+    data_dir = str(job_dir)
+    output_dir = os.path.join(data_dir, "nethriq_media")
+    delivery_dir = os.path.join(data_dir, "delivery_staging")
+    
+    # Load CSV data from job directory
+    best_shots_csv = os.path.join(data_dir, "player_data", "player_best_shots.csv")
+    serve_return_csv = os.path.join(data_dir, "player_data", "highlight_registry.csv")
+    
+    best_shots_df = pd.read_csv(best_shots_csv)
+    serve_return_df = pd.read_csv(serve_return_csv)
+
+    # When a player is selected, generate only that player's assets.
+    if selected_player_index is not None:
+        try:
+            selected_player_id = int(selected_player_index)
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid selected_player_index: {selected_player_index}")
+
+        best_shots_df = best_shots_df[
+            pd.to_numeric(best_shots_df["player_id"], errors="coerce") == selected_player_id
+        ]
+        serve_return_df = serve_return_df[
+            pd.to_numeric(serve_return_df["player_id"], errors="coerce") == selected_player_id
+        ]
+        print(f"🎯 Generating clips only for player_{selected_player_id}")
+    
+    if len(best_shots_df) == 0 and len(serve_return_df) == 0:
+        if selected_player_index is not None:
+            print(f"⚠️ No highlights found for player_{int(selected_player_index)}")
+        else:
+            print("⚠️ No highlights found in CSVs!")
         return
 
+    # Initialize tracking dictionaries
+    best_shot_reels = defaultdict(list)
+    serve_return_clips = defaultdict(list)
+
     # Step 1: Generate a single hero clip per player for Slide 1 embedding
-    generate_hero_clips(best_shots)
+    generate_hero_clips(best_shots_df, output_dir, video_url)
     
     # Generate best-shot clips (PB Vision) - limited to top N per player
-    best_shots_sorted = best_shots.sort_values(["player_id", "start_ms"], kind="stable")
+    best_shots_sorted = best_shots_df.sort_values(["player_id", "start_ms"], kind="stable")
     best_shots_limited = best_shots_sorted.groupby("player_id", as_index=False).head(MAX_BEST_SHOT_CLIPS)
     for idx, row in best_shots_limited.iterrows():
         start_ms = row.get("start_ms")
@@ -399,7 +356,7 @@ def main():
         clip_end = end_ms + PAD_MS["highlight"]
 
         group_key = player_id
-        clip_dir = os.path.join(OUTPUT_DIR, "players", normalize_player_id(player_id), "best_shots", "clips")
+        clip_dir = os.path.join(output_dir, "players", normalize_player_id(player_id), "best_shots", "clips")
 
         os.makedirs(clip_dir, exist_ok=True)
         highlight_idx = f"ms{start_ms}_to_{end_ms}"
@@ -411,7 +368,7 @@ def main():
             "ffmpeg",
             "-ss", f"{clip_start/1000:.3f}",
             "-to", f"{clip_end/1000:.3f}",
-            "-i", INPUT_VIDEO,
+            "-i", video_url,
             "-c", "copy",
             "-y",
             clip_path
@@ -420,8 +377,8 @@ def main():
         run_cmd(cmd)
 
     # Generate serve/return clips (player context reels) - limited to top N per type/player
-    if len(serve_return) > 0:
-        serve_return_filtered = serve_return[serve_return["highlight_type"].isin(["serve_context", "return_context"])]
+    if len(serve_return_df) > 0:
+        serve_return_filtered = serve_return_df[serve_return_df["highlight_type"].isin(["serve_context", "return_context"])]
         serve_limited = serve_return_filtered[serve_return_filtered['highlight_type'] == 'serve_context'].groupby('player_id', as_index=False).head(MAX_SERVE_CLIPS)
         return_limited = serve_return_filtered[serve_return_filtered['highlight_type'] == 'return_context'].groupby('player_id', as_index=False).head(MAX_RETURN_CLIPS)
         serve_return_filtered = pd.concat([serve_limited, return_limited], ignore_index=True)
@@ -439,7 +396,7 @@ def main():
             clip_end = end_ms + pad
 
             group_key = (highlight_type, player_id)
-            clip_dir = os.path.join(OUTPUT_DIR, "players", normalize_player_id(player_id), "sessions", SESSION_ID, "highlights", highlight_type)
+            clip_dir = os.path.join(output_dir, "players", normalize_player_id(player_id), "sessions", SESSION_ID, "highlights", highlight_type)
             os.makedirs(clip_dir, exist_ok=True)
             clip_path = os.path.join(clip_dir, f"{vid}_r{rally_idx}.mp4")
 
@@ -449,29 +406,26 @@ def main():
                 "ffmpeg",
                 "-ss", f"{clip_start/1000:.3f}",
                 "-to", f"{clip_end/1000:.3f}",
-                "-i", INPUT_VIDEO,
+                "-i", video_url,
                 "-c", "copy",
                 "-y",
                 clip_path
             ]
 
             run_cmd(cmd)
-    # Concatenate and upload reels
+    # Concatenate best shot reels
     for player_id, segments in best_shot_reels.items():
         segments.sort(key=lambda x: x[0])
         clip_paths = [s[1] for s in segments]
 
         # Create per-player best-shots reel
-        output_dir = os.path.join(OUTPUT_DIR, "players", normalize_player_id(player_id), "best_shots")
-        os.makedirs(output_dir, exist_ok=True)
-        list_file = os.path.join(output_dir, "best_shots.txt")
-        output_video = os.path.join(output_dir, "best_shots.mp4")
-        rclone_path = f"nethriq_drive:nethriq_media/players/{normalize_player_id(player_id)}/best_shots/best_shots.mp4"
-        link_key = f"{normalize_player_id(player_id)}_best_shots"
+        best_shots_dir = os.path.join(output_dir, "players", normalize_player_id(player_id), "best_shots")
+        os.makedirs(best_shots_dir, exist_ok=True)
+        list_file = os.path.join(best_shots_dir, "best_shots.txt")
+        output_video = os.path.join(best_shots_dir, "best_shots.mp4")
 
         # Write concat file
         write_concat_file(clip_paths, list_file)
-        list_files.append(list_file)
 
         # Concatenate clips locally
         concat_cmd = [
@@ -484,39 +438,18 @@ def main():
         run_cmd(concat_cmd)
         print(f"✅ Created {output_video}")
 
-        # Upload video and get shareable link
-        if UPLOAD:
-            success, shareable_link = upload_video_to_drive(list_file, rclone_path, link_key)
-            if success and shareable_link:
-                video_links[link_key] = {
-                    "link": shareable_link,
-                    "status": "success"
-                }
-            else:
-                video_links[link_key] = {
-                    "link": None,
-                    "status": "failure"
-                }
-
-            # Cleanup list file after upload
-            if os.path.exists(list_file):
-                os.remove(list_file)
-
-    # Concatenate and upload serve/return reels
+    # Concatenate serve/return reels
     for group_key, clips in serve_return_clips.items():
         clips.sort(key=lambda x: x[0])
         clip_paths = [c[1] for c in clips]
 
         highlight_type, player_id = group_key
-        output_dir = os.path.join(OUTPUT_DIR, "players", normalize_player_id(player_id), "sessions", SESSION_ID, "highlights", highlight_type)
-        os.makedirs(output_dir, exist_ok=True)
-        list_file = os.path.join(output_dir, f"{highlight_type}.txt")
-        output_video = os.path.join(output_dir, f"{highlight_type}_highlights.mp4")
-        rclone_path = f"nethriq_drive:nethriq_media/players/{normalize_player_id(player_id)}/sessions/{SESSION_ID}/highlights/{highlight_type}/{highlight_type}_highlights.mp4"
-        link_key = f"{normalize_player_id(player_id)}_{highlight_type}"
+        highlights_dir = os.path.join(output_dir, "players", normalize_player_id(player_id), "sessions", SESSION_ID, "highlights", highlight_type)
+        os.makedirs(highlights_dir, exist_ok=True)
+        list_file = os.path.join(highlights_dir, f"{highlight_type}.txt")
+        output_video = os.path.join(highlights_dir, f"{highlight_type}_highlights.mp4")
 
         write_concat_file(clip_paths, list_file)
-        list_files.append(list_file)
 
         # Concatenate clips locally
         concat_cmd = [
@@ -528,41 +461,36 @@ def main():
         ]
         run_cmd(concat_cmd)
         print(f"✅ Created {output_video}")
-
-        if UPLOAD:
-            success, shareable_link = upload_video_to_drive(list_file, rclone_path, link_key)
-            if success and shareable_link:
-                video_links[link_key] = {
-                    "link": shareable_link,
-                    "status": "success"
-                }
-            else:
-                video_links[link_key] = {
-                    "link": None,
-                    "status": "failure"
-                }
-
-            if os.path.exists(list_file):
-                os.remove(list_file)
     
     # Cleanup all videos and directories
     if CLEANUP_INTERMEDIATE:
-        cleanup_all_videos(OUTPUT_DIR)
-        cleanup_empty_directories(OUTPUT_DIR)
+        cleanup_all_videos(output_dir)
+        cleanup_empty_directories(output_dir)
 
     # Build delivery staging layout from final reels
-    stage_delivery_layout(OUTPUT_DIR, DELIVERY_DIR, SESSION_ID)
-
-    # Save video links to JSON file for later use in PPT
-    links_file = os.path.join(DATA_DIR, "video_links.json")
-    with open(links_file, "w") as f:
-        json.dump(video_links, f, indent=2)
+    stage_delivery_layout(output_dir, delivery_dir, SESSION_ID)
     
-    print(f"💾 Video links saved to {links_file}")
     print("✅ Highlight reels generated successfully.")
+    
+    return {
+        'status': 'success',
+        'highlights_count': len(best_shots_df) + len(serve_return_df),
+        'output_dir': str(output_dir)
+    }
+
+
+def main():
+    """Legacy entry point for command-line execution."""
+    job_dir = os.environ.get("JOB_DATA_DIR", DEFAULT_JOB_DIR)
+    video_url = os.environ.get("SOURCE_VIDEO_URL", DEFAULT_VIDEO_URL)
+    
+    print("🎬 Starting video clipper...")
+    print(f"📊 Loading best shots from {os.path.join(job_dir, 'player_data', 'player_best_shots.csv')}")
+    print(f"📊 Loading serve/return highlights from {os.path.join(job_dir, 'player_data', 'highlight_registry.csv')}")
+    
+    result = generate_highlights(job_dir, video_url)
+    return result
+
 
 if __name__ == "__main__":
-    print("🎬 Starting video clipper...")
-    print(f"📊 Loading best shots from {BEST_SHOTS_CSV}")
-    print(f"📊 Loading serve/return highlights from {SERVE_RETURN_CSV}")
     main()

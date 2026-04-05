@@ -13,7 +13,7 @@
 </head>
 <body>
     <!-- Navigation Bar -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <nav id="main-navbar" class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container-fluid">
             <a class="navbar-brand" href="#home">Nethriq</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
@@ -32,6 +32,12 @@
                     </li>
                     <li class="nav-item" id="nav-jobs" style="display:none;">
                         <a class="nav-link" href="#jobs">My Jobs</a>
+                    </li>
+                    <li class="nav-item" id="nav-global-dashboard" style="display:none;">
+                        <a class="nav-link" href="#global-dashboard">Global Dashboard</a>
+                    </li>
+                    <li class="nav-item" id="nav-new-match" style="display:none;">
+                        <a class="nav-link" href="#new-match">New Match</a>
                     </li>
                     <li class="nav-item" id="nav-logout" style="display:none;">
                         <a class="nav-link" href="#logout">Logout</a>
@@ -102,6 +108,33 @@
             </div>
         </div>
 
+        <!-- Forced Password Setup Page (Stub Claim Flow) -->
+        <div id="page-set-password" class="page-section" style="display:none;">
+            <div class="row justify-content-center">
+                <div class="col-md-6">
+                    <div class="card border-primary">
+                        <div class="card-body">
+                            <h2 class="card-title text-center mb-3">Set Your Password</h2>
+                            <p class="text-muted text-center">
+                                Your account is almost ready. Create your password to continue.
+                            </p>
+                            <form id="form-set-password">
+                                <div class="mb-3">
+                                    <label for="set-password-new" class="form-label">New Password</label>
+                                    <input type="password" class="form-control" id="set-password-new" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="set-password-confirm" class="form-label">Confirm Password</label>
+                                    <input type="password" class="form-control" id="set-password-confirm" required>
+                                </div>
+                                <button type="submit" class="btn btn-primary w-100">Save Password</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Upload Page -->
         <div id="page-upload" class="page-section" style="display:none;">
             <div class="row justify-content-center">
@@ -164,6 +197,109 @@
             </div>
         </div>
 
+        <!-- Attendant Global Dashboard -->
+        <div id="page-global-dashboard" class="page-section" style="display:none;">
+            <div class="row">
+                <div class="col-12 d-flex justify-content-between align-items-center mb-3">
+                    <h2 class="mb-0">Global Dashboard</h2>
+                    <a href="#new-match" class="btn btn-primary">New Match</a>
+                </div>
+                <div class="col-12">
+                    <div id="global-jobs-loading" class="alert alert-info">Loading all jobs...</div>
+                    <div id="global-jobs-table-container" style="display:none;">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Player</th>
+                                    <th>Video</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="global-jobs-table-body"></tbody>
+                        </table>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <small id="global-jobs-count" class="text-muted"></small>
+                            <button id="global-load-more" class="btn btn-outline-secondary btn-sm" style="display:none;">Load More</button>
+                        </div>
+                    </div>
+                    <div id="global-jobs-empty" class="alert alert-warning" style="display:none;">
+                        No jobs found yet.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Attendant New Match -->
+        <div id="page-new-match" class="page-section" style="display:none;">
+            <div class="row justify-content-center">
+                <div class="col-md-10">
+                    <div class="card mb-4">
+                        <div class="card-body">
+                            <h2 class="card-title mb-3">New Match</h2>
+                            <form id="form-attendant-upload">
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label for="attendant-upload-name" class="form-label">Match Name (optional)</label>
+                                        <input type="text" class="form-control" id="attendant-upload-name" placeholder="e.g., Court 2 Saturday AM">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="attendant-upload-file" class="form-label">Video File</label>
+                                        <input type="file" class="form-control" id="attendant-upload-file" accept="video/*" required>
+                                    </div>
+                                    <div class="col-12">
+                                        <label for="player-search" class="form-label">Assign to Player</label>
+                                        <input type="text" class="form-control" id="player-search" placeholder="Search by name, username, or email">
+                                        <div id="player-search-results" class="list-group mt-2"></div>
+                                        <small id="selected-player-text" class="text-muted d-block mt-2">No player selected.</small>
+                                    </div>
+                                    <div class="col-12">
+                                        <button type="submit" class="btn btn-primary">Upload For Selected Player</button>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="mb-3">Quick Create Stub Player</h5>
+                            <form id="form-create-stub" class="row g-3">
+                                <div class="col-md-5">
+                                    <label for="stub-name" class="form-label">Player Name</label>
+                                    <input type="text" id="stub-name" class="form-control" required>
+                                </div>
+                                <div class="col-md-5">
+                                    <label for="stub-email" class="form-label">Player Email</label>
+                                    <input type="email" id="stub-email" class="form-control" required>
+                                </div>
+                                <div class="col-md-2 d-flex align-items-end">
+                                    <button type="submit" class="btn btn-success w-100">Create</button>
+                                </div>
+                            </form>
+                            <div id="stub-create-result" class="mt-3"></div>
+                        </div>
+                    </div>
+
+                    <div class="card mt-4">
+                        <div class="card-body">
+                            <h5 class="mb-3">Resend Claim Email</h5>
+                            <form id="form-resend-claim" class="row g-3">
+                                <div class="col-md-9">
+                                    <label for="resend-claim-email" class="form-label">Stub Player Email</label>
+                                    <input type="email" id="resend-claim-email" class="form-control" required>
+                                </div>
+                                <div class="col-md-3 d-flex align-items-end">
+                                    <button type="submit" class="btn btn-outline-primary w-100">Resend</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Job Details Modal -->
         <div class="modal fade" id="jobDetailsModal" tabindex="-1">
             <div class="modal-dialog modal-lg">
@@ -175,6 +311,12 @@
                     <div class="modal-body">
                         <div id="job-details-content">
                             <!-- Populated by JavaScript -->
+                        </div>
+                        <div id="job-player-selection" class="mt-4 text-center" style="display:none;">
+                            <h5 class="text-primary mb-2">Identify Your Player</h5>
+                            <p class="text-muted small mb-3">Select yourself from the match thumbnails to generate your tailored analytics.</p>
+                            <div class="row justify-content-center" id="player-thumbnails-container">
+                            </div>
                         </div>
                         <div id="job-downloads" class="mt-3" style="display:none;">
                             <h6 class="mb-2">Downloads</h6>

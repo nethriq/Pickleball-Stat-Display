@@ -1,10 +1,10 @@
 import os
 from os import path
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 import pandas as pd
 from pptx import Presentation
-
-THUMBNAIL = "static"
 
 def replace_tokens_and_links(shape, token_map, link_map):
     """
@@ -140,84 +140,152 @@ def inject_thumbnail(prs, player_id, media_dir):
     print("Warning: Placeholder 'THUMBNAIL' not found in the target slide")
 
 
-# ============================================================================
-# Set up file paths and load data
-# ============================================================================
-default_data_dir = path.join(path.dirname(path.abspath(__file__)), '..', 'data')
-job_dir = os.environ.get("JOB_DATA_DIR", default_data_dir)
-csv_path = path.join(job_dir, 'player_data', 'player_averages.csv')
-ppt_template_path = path.join(path.dirname(path.abspath(__file__)), '..', 'node', 'mixed_doubles', 'NethriQ_Gautham.pptx')
-graphics_dir = path.join(job_dir, 'graphics')
-media_dir = path.join(job_dir, 'nethriq_media')
-
-df = pd.read_csv(csv_path)
-
-# Calculate overall grade from average of individual grades
-grade_to_num = {"Beginner": 0, "Intermediate": 1, "Advanced": 2, "Pro": 3}
-num_to_grade = {0: "Beginner", 1: "Intermediate", 2: "Advanced", 3: "Pro"}
-
-local_video_links = {
-    "{{BEST_SHOTS_VIDEO_LINK}}": path.join("..", "Videos", "Best_Shots.mp4"),
-    "{{BEST_SHOTS_VIDEO}}": path.join("..", "Videos", "Best_Shots.mp4"),
-    "{{RETURN_VIDEO_LINK}}": path.join("..", "Videos", "Return_Context.mp4"),
-    "{{SERVE_VIDEO_LINK}}": path.join("..", "Videos", "Serve_Context.mp4"),
-}
-
-for _, row in df.iterrows():
-    if pd.isna(row.get("player_id")):
-        continue
-
-    player_id = int(float(row["player_id"]))
-
-    grade_values = [
-        grade_to_num.get(row["serve_depth_grade"], 0),
-        grade_to_num.get(row["serve_height_grade"], 0),
-        grade_to_num.get(row["serve_kitchen_grade"], 0),
-        grade_to_num.get(row["return_depth_grade"], 0),
-        grade_to_num.get(row["return_height_grade"], 0),
-        grade_to_num.get(row["return_kitchen_grade"], 0),
-    ]
-    avg_grade_num = round(sum(grade_values) / len(grade_values))
-    overall_grade = num_to_grade.get(avg_grade_num, "Intermediate")
-
-    token_map = {
-        "{{PLAYER}}": row["player_name"] if pd.notna(row["player_name"]) else "Player",
-        "{{SERVE_DEPTH_VALUE}}": f"{row['serve_depth_avg']:.2f}",
-        "{{SERVE_DEPTH_GRADE}}": row["serve_depth_grade"],
-        "{{SERVE_HEIGHT_VALUE}}": f"{row['serve_height_avg']:.2f}",
-        "{{SERVE_HEIGHT_GRADE}}": row["serve_height_grade"],
-        "{{RETURN_DEPTH_VALUE}}": f"{row['return_depth_avg']:.2f}",
-        "{{RETURN_DEPTH_GRADE}}": row["return_depth_grade"],
-        "{{RETURN_HEIGHT_VALUE}}": f"{row['return_height_avg']:.2f}",
-        "{{RETURN_HEIGHT_GRADE}}": row["return_height_grade"],
-        "{{KAS}}": f"{row['serve_kitchen_pct'] * 100:.0f}",
-        "{{KAS_GRADE}}": row["serve_kitchen_grade"],
-        "{{KAR}}": f"{row['return_kitchen_pct'] * 100:.0f}",
-        "{{KAR_GRADE}}": row["return_kitchen_grade"],
-        "{{OVERALL_GRADE}}": overall_grade,
-        "{{BEST_SHOTS_VIDEO_LINK}}": "Best Shots",
-        "{{BEST_SHOTS_VIDEO}}": "Best Shots",
-        "{{RETURN_VIDEO_LINK}}": "Returns in Game",
-        "{{SERVE_VIDEO_LINK}}": "Serves in Game"
+def generate_player_reports(
+    job_directory,
+    selected_player_index=None,
+    stage1_output: Optional[Dict[str, Any]] = None,
+    kitchen_summary: Optional[Dict[str, Any]] = None,
+    highlights_summary: Optional[Dict[str, Any]] = None,
+    use_thumbnail: bool = True,
+):
+    """
+    Generate PowerPoint reports for players.
+    
+    Args:
+        job_directory: Path to job output directory (str or Path)
+        selected_player_index: User's selected player (0-3), optional
+        stage1_output: Dict returned by process_match_data containing DataFrames
+        kitchen_summary: Dict returned by generate_kitchen_visualizations
+        highlights_summary: Dict returned by generate_highlights
+        use_thumbnail: Whether to inject hero thumbnail into reports
+    
+    Returns:
+        dict: Summary of generated reports
+    """
+    print("📊 Starting PowerPoint report generation...\n")
+    
+    job_dir = Path(job_directory)
+    
+    if stage1_output is None:
+        raise ValueError("stage1_output is required and must be the return value of process_match_data")
+    
+    # Extract player averages DataFrame
+    player_avg_df = stage1_output.get("player_avg_df")
+    if player_avg_df is None or (hasattr(player_avg_df, 'empty') and player_avg_df.empty):
+        print("⚠️ No player averages data available, skipping report generation")
+        return {'reports_generated': False, 'reason': 'no_player_data'}
+    
+    # Extract paths from previous stage summaries
+    graphics_dir = kitchen_summary.get('output_dir') if kitchen_summary else str(job_dir / 'graphics')
+    media_dir = highlights_summary.get('output_dir') if highlights_summary else str(job_dir / 'nethriq_media')
+    
+    # Locate PPT template
+    ppt_template_path = path.join(path.dirname(path.abspath(__file__)), '..', 'node', 'mixed_doubles', 'NethriQ_Gautham.pptx')
+    if not path.exists(ppt_template_path):
+        raise FileNotFoundError(f"PowerPoint template not found: {ppt_template_path}")
+    
+    # Grade mapping
+    grade_to_num = {"Beginner": 0, "Intermediate": 1, "Advanced": 2, "Pro": 3}
+    num_to_grade = {0: "Beginner", 1: "Intermediate", 2: "Advanced", 3: "Pro"}
+    
+    # Local video links (relative paths for embedded videos)
+    local_video_links = {
+        "{{BEST_SHOTS_VIDEO_LINK}}": path.join("..", "Videos", "Best_Shots.mp4"),
+        "{{BEST_SHOTS_VIDEO}}": path.join("..", "Videos", "Best_Shots.mp4"),
+        "{{RETURN_VIDEO_LINK}}": path.join("..", "Videos", "Return_Context.mp4"),
+        "{{SERVE_VIDEO_LINK}}": path.join("..", "Videos", "Serve_Context.mp4"),
+    }
+    
+    # Convert DataFrame to records for iteration
+    if hasattr(player_avg_df, 'to_dict'):
+        player_records = player_avg_df.to_dict(orient='records')
+    elif isinstance(player_avg_df, list):
+        player_records = player_avg_df
+    else:
+        raise ValueError("player_avg_df must be a DataFrame or list of records")
+    
+    reports_generated = 0
+    
+    for row in player_records:
+        if pd.isna(row.get("player_id")):
+            continue
+        
+        player_id = int(float(row["player_id"]))
+        
+        # Skip if not the selected player
+        if selected_player_index is not None and player_id != int(selected_player_index):
+            continue
+        
+        # Calculate overall grade from average of individual grades
+        grade_values = [
+            grade_to_num.get(row["serve_depth_grade"], 0),
+            grade_to_num.get(row["serve_height_grade"], 0),
+            grade_to_num.get(row["serve_kitchen_grade"], 0),
+            grade_to_num.get(row["return_depth_grade"], 0),
+            grade_to_num.get(row["return_height_grade"], 0),
+            grade_to_num.get(row["return_kitchen_grade"], 0),
+        ]
+        avg_grade_num = round(sum(grade_values) / len(grade_values))
+        overall_grade = num_to_grade.get(avg_grade_num, "Intermediate")
+        
+        # Build token map for this player
+        token_map = {
+            "{{PLAYER}}": row["player_name"] if pd.notna(row.get("player_name")) else "Player",
+            "{{SERVE_DEPTH_VALUE}}": f"{row['serve_depth_avg']:.2f}",
+            "{{SERVE_DEPTH_GRADE}}": row["serve_depth_grade"],
+            "{{SERVE_HEIGHT_VALUE}}": f"{row['serve_height_avg']:.2f}",
+            "{{SERVE_HEIGHT_GRADE}}": row["serve_height_grade"],
+            "{{RETURN_DEPTH_VALUE}}": f"{row['return_depth_avg']:.2f}",
+            "{{RETURN_DEPTH_GRADE}}": row["return_depth_grade"],
+            "{{RETURN_HEIGHT_VALUE}}": f"{row['return_height_avg']:.2f}",
+            "{{RETURN_HEIGHT_GRADE}}": row["return_height_grade"],
+            "{{KAS}}": f"{row['serve_kitchen_pct'] * 100:.0f}",
+            "{{KAS_GRADE}}": row["serve_kitchen_grade"],
+            "{{KAR}}": f"{row['return_kitchen_pct'] * 100:.0f}",
+            "{{KAR_GRADE}}": row["return_kitchen_grade"],
+            "{{OVERALL_GRADE}}": overall_grade,
+            "{{BEST_SHOTS_VIDEO_LINK}}": "Best Shots",
+            "{{BEST_SHOTS_VIDEO}}": "Best Shots",
+            "{{RETURN_VIDEO_LINK}}": "Returns in Game",
+            "{{SERVE_VIDEO_LINK}}": "Serves in Game"
+        }
+        
+        token_map = {key: str(value) for key, value in token_map.items()}
+        
+        # Load presentation template
+        prs = Presentation(ppt_template_path)
+        
+        # Replace tokens in all slides
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                replace_tokens_and_links(shape, token_map, local_video_links)
+        
+        # Inject kitchen snapshot image
+        inject_kitchen_snapshot(prs, player_id, graphics_dir)
+        
+        # Inject hero thumbnail if enabled
+        if use_thumbnail:
+            inject_thumbnail(prs, player_id, media_dir)
+        
+        # Save output PowerPoint file
+        output_dir = job_dir / 'delivery_staging' / f"Player_{player_id}" / 'Reports'
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_ppt_path = output_dir / 'player_report.pptx'
+        prs.save(str(output_ppt_path))
+        print(f"✓ Generated: {output_ppt_path}")
+        reports_generated += 1
+    
+    print(f"\n✅ PowerPoint report generation complete! ({reports_generated} reports)")
+    
+    return {
+        'reports_generated': True,
+        'count': reports_generated,
+        'selected_player_index': selected_player_index,
     }
 
-    token_map = {key: str(value) for key, value in token_map.items()}
 
-    prs = Presentation(ppt_template_path)
-
-    # Replace tokens in all slides
-    for slide in prs.slides:
-        for shape in slide.shapes:
-            replace_tokens_and_links(shape, token_map, local_video_links)
-
-    # Inject kitchen snapshot image
-    inject_kitchen_snapshot(prs, player_id, graphics_dir)
-    if THUMBNAIL == "static":
-        inject_thumbnail(prs, player_id, media_dir)
-
-    # Save output PowerPoint file
-    output_dir = path.join(job_dir, 'delivery_staging', f"Player_{player_id}", 'Reports')
-    os.makedirs(output_dir, exist_ok=True)
-    output_ppt_path = path.join(output_dir, 'player_report.pptx')
-    prs.save(output_ppt_path)
-    print(f"Generated {output_ppt_path}")
+if __name__ == "__main__":
+    raise RuntimeError(
+        "Direct CLI execution is not supported. "
+        "Use generate_player_reports(..., stage1_output=..., kitchen_summary=..., highlights_summary=...) from the pipeline."
+    )

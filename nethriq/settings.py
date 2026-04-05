@@ -11,10 +11,39 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
+import sys
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _load_env_file(file_path: Path, override: bool = False) -> None:
+    """Minimal dotenv loader to avoid external runtime requirements in settings."""
+    if not file_path.exists():
+        return
+
+    for raw_line in file_path.read_text(encoding='utf-8').splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+
+        key, value = line.split('=', 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+
+        if not key:
+            continue
+        if override:
+            os.environ[key] = value
+        else:
+            os.environ.setdefault(key, value)
+
+
+# Load environment variables from project-level dotenv files.
+# `.env.local` can override `.env` for machine-specific configuration.
+_load_env_file(BASE_DIR / '.env')
+_load_env_file(BASE_DIR / '.env.local', override=True)
 
 
 # Quick-start development settings - unsuitable for production
@@ -194,4 +223,76 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv('DATA_UPLOAD_MAX_MEMORY_SIZE', 100 *
 _upload_temp_dir = os.getenv('FILE_UPLOAD_TEMP_DIR', '/tmp/django_uploads')
 os.makedirs(_upload_temp_dir, exist_ok=True)
 FILE_UPLOAD_TEMP_DIR = _upload_temp_dir
+
+
+# ============================================================================
+# Email Delivery Configuration
+# ============================================================================
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _env_int(name: str, default: int, minimum: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(parsed, minimum)
+
+
+def _env_float(name: str, default: float, minimum: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(parsed, minimum)
+
+RUNNING_TESTS = any(arg in {'test', 'pytest'} for arg in sys.argv)
+
+EMAIL_DELIVERY_ENABLED = _env_bool('EMAIL_DELIVERY_ENABLED', not RUNNING_TESTS)
+EMAIL_DELIVERY_MAX_ATTACHMENT_BYTES = _env_int(
+    'EMAIL_DELIVERY_MAX_ATTACHMENT_BYTES',
+    25 * 1024 * 1024,
+    1,
+)
+
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'localhost')
+EMAIL_PORT = _env_int('EMAIL_PORT', 25, 1)
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = _env_bool('EMAIL_USE_TLS', False)
+EMAIL_USE_SSL = _env_bool('EMAIL_USE_SSL', False)
+if EMAIL_USE_TLS and EMAIL_USE_SSL:
+    # Prefer TLS when both are accidentally enabled.
+    EMAIL_USE_SSL = False
+EMAIL_TIMEOUT = _env_int('EMAIL_TIMEOUT', 30, 1)
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'no-reply@nethriq.local')
+
+
+# ============================================================================
+# Stub Claim Flow Configuration
+# ============================================================================
+
+# Branding value for claim/delivery communications.
+CLUB_NAME = os.getenv('CLUB_NAME', 'PB Vision Athletics')
+
+# Default one-time claim link validity window.
+CLAIM_LINK_TTL_HOURS = _env_float('CLAIM_LINK_TTL_HOURS', 24.0, 0.25)
+CLAIM_LINK_TTL_SECONDS = int(CLAIM_LINK_TTL_HOURS * 3600)
+
+# Optional explicit frontend origin for claim links.
+# Example: https://app.example.com
+CLAIM_URL_BASE = os.getenv('CLAIM_URL_BASE', '').strip()
 

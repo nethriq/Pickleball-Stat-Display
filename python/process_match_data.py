@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
 Unified match data processing pipeline.
-Converts stats.json → shot/kitchen CSVs → highlight registry → player averages.
+Converts PB Vision data → shot/kitchen CSVs → highlight registry → player averages.
 """
 
 import json
 import csv
-import os
 import pandas as pd
 import sys
 from pathlib import Path
@@ -558,34 +557,42 @@ def stage_delivery_data(output_dir, data_dir, player_ids):
             dst = delivery_data_dir / csv_name
             player_df.to_csv(dst, index=False)
 
+
+def filter_df_for_selected_player(df, selected_player_index):
+    """Filter a DataFrame to the selected player when player_id is available."""
+    if selected_player_index is None or df is None or df.empty:
+        return df
+
+    if "player_id" not in df.columns:
+        return df
+
+    player_id_series = pd.to_numeric(df["player_id"], errors="coerce")
+    return df[player_id_series == selected_player_index].copy()
+
 # ============================================================================
 # Main Orchestration
 # ============================================================================
-def main():
-    """Execute unified pipeline."""
+def process_match_data(pbvision_data, job_directory, selected_player_index=None):
+    """
+    Execute unified pipeline with in-memory data.
+    
+    Args:
+        pbvision_data: PB Vision JSON response (dict)
+        job_directory: Path to job output directory (str or Path)
+        selected_player_index: User's selected player (0-3), optional
+    
+    Returns:
+        dict: Structured payload containing generated DataFrames
+    """
     print("🎬 Starting unified match data processing...\n")
-
-    job_dir_str = os.environ.get("JOB_DATA_DIR")
-    if not job_dir_str:
-        raise RuntimeError("JOB_DATA_DIR environment variable not set!")
-
-    job_dir = Path(job_dir_str)
+    print(f"   Selected Player Index: {selected_player_index}")
+    
+    job_dir = Path(job_directory)
     output_dir = job_dir / "player_data"
     output_dir.mkdir(parents=True, exist_ok=True)
-    json_file_path = job_dir / "pbvision_input.json"
 
-    print(f"📂 Loading {json_file_path}...")
-    try:
-        with open(json_file_path, "r") as f:
-            match_data = json.load(f)
-    except FileNotFoundError:
-        print(f"❌ File not found: {json_file_path}")
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"❌ Invalid JSON in {json_file_path}: {e}")
-        sys.exit(1)
-
-    data_list = match_data if isinstance(match_data, list) else [match_data]
+    # Process the data directly from memory (no file I/O!)
+    data_list = pbvision_data if isinstance(pbvision_data, list) else [pbvision_data]
     
     stats = find_object(data_list, "stats")
     insights = find_object(data_list, "insights") or {}
@@ -606,6 +613,20 @@ def main():
     best_shots_df = generate_player_best_shots(insights, vid, output_dir, top_n=50)
     player_avg_df = calculate_player_averages(shot_df, kitchen_df, output_dir)
 
+    # Apply selected-player filtering across all generated DataFrames.
+    kitchen_df = filter_df_for_selected_player(kitchen_df, selected_player_index)
+    shot_df = filter_df_for_selected_player(shot_df, selected_player_index)
+    highlight_df = filter_df_for_selected_player(highlight_df, selected_player_index)
+    best_shots_df = filter_df_for_selected_player(best_shots_df, selected_player_index)
+    player_avg_df = filter_df_for_selected_player(player_avg_df, selected_player_index)
+
+    # Persist filtered outputs so downstream stages read the same scoped data.
+    kitchen_df.to_csv(output_dir / "kitchen_role_stats.csv", index=False)
+    shot_df.to_csv(output_dir / "shot_level_data.csv", index=False)
+    highlight_df.to_csv(output_dir / "highlight_registry.csv", index=False)
+    best_shots_df.to_csv(output_dir / "player_best_shots.csv", index=False)
+    player_avg_df.to_csv(output_dir / "player_averages.csv", index=False)
+
     if not player_avg_df.empty:
         player_ids = set(int(pid) for pid in player_avg_df["player_id"].dropna().unique())
         stage_delivery_data(output_dir, job_dir, player_ids)
@@ -617,6 +638,41 @@ def main():
         f"{len(best_shots_df)} PB Vision best-shot segments, "
         f"{len(player_avg_df)} players"
     )
+    
+    return {
+        "vid": vid,
+        "selected_player_index": selected_player_index,
+        "kitchen_df": kitchen_df,
+        "shot_df": shot_df,
+        "highlight_df": highlight_df,
+        "best_shots_df": best_shots_df,
+        "player_avg_df": player_avg_df,
+    }
+
+
+def main():
+    """
+    Legacy entry point for command-line execution.
+    Uses db_accessor for backwards compatibility.
+    """
+    print("🎬 Starting unified match data processing...\n")
+
+    # Import here to avoid circular dependency
+    from db_accessor import get_job_data
+    
+    # Fetch data from database
+    print("📊 Fetching job data from database...")
+    job_data = get_job_data()  # Uses JOB_ID env var
+    
+    match_data = job_data['pbvision_response']
+    job_dir = Path(job_data['job_dir'])
+    selected_player = job_data['selected_player_index']
+    
+    print(f"✅ Loaded data for Job {job_data['job_id']}")
+    
+    # Call the new in-memory function
+    result = process_match_data(match_data, job_dir, selected_player)
+    return result
 
 if __name__ == "__main__":
     main()

@@ -1,14 +1,9 @@
 """UI-focused snapshots for player kitchen data."""
-import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from pathlib import Path
-
-job_dir = os.environ.get("JOB_DATA_DIR", Path(__file__).parent.parent / "data")
-DATA_DIR = Path(job_dir)
-OUT_DIR = DATA_DIR / "graphics"
-OUT_DIR.mkdir(exist_ok=True)
+from typing import Any, Dict, Optional
 
 TILE_BG = "#f7f7f7"
 PLAYER_COLORS = {
@@ -107,9 +102,21 @@ def build_player_legend(ax, player_ids, anchor):
 	for text in legend.get_texts():
 		text.set_color("#222222")
 
-def render_player_kitchen(player_id: int):
-	df = pd.read_csv(DATA_DIR / "player_data/kitchen_role_stats.csv")
-
+def render_player_kitchen(player_id: int, kitchen_df, output_dir: Path):
+	"""Render kitchen visualization for a specific player.
+	
+	Args:
+		player_id: Player index (0-3)
+		kitchen_df: Kitchen role stats DataFrame from stage1_output
+		output_dir: Directory to save the output PNG
+	"""
+	if kitchen_df is None or (hasattr(kitchen_df, 'empty') and kitchen_df.empty):
+		print(f"⚠️ No kitchen data available for player {player_id}")
+		return
+	
+	# Work with a copy to avoid modifying the original
+	df = kitchen_df.copy() if hasattr(kitchen_df, 'copy') else pd.DataFrame(kitchen_df)
+	
 	df = df[df["perspective"] == "oneself"]
 
 	serve = df[df["role"] == "serving"]
@@ -215,12 +222,62 @@ def render_player_kitchen(player_id: int):
 		build_player_legend(ax, legend_players, anchor=(1.0, -0.03))
 
 	plt.tight_layout()
-	output_file = OUT_DIR / f"kitchen_player_{player_id}.png"
+	output_dir.mkdir(parents=True, exist_ok=True)
+	output_file = output_dir / f"kitchen_player_{player_id}.png"
 	plt.savefig(output_file, dpi=300, bbox_inches="tight")
-	print(f"Saved: {output_file}")
+	print(f"✓ Generated: {output_file}")
 	plt.close()
 
 
+def generate_kitchen_visualizations(job_directory, selected_player_index=None, stage1_output: Optional[Dict[str, Any]] = None):
+	"""Generate kitchen visualizations.
+	
+	Args:
+		job_directory: Path to job output directory (str or Path)
+		selected_player_index: User's selected player (0-3), optional
+		stage1_output: Dict returned by process_match_data containing DataFrames
+	
+	Returns:
+		dict: Summary of generated visualizations
+	"""
+	print("🎨 Starting kitchen visualization generation...\n")
+	
+	job_dir = Path(job_directory)
+	if stage1_output is None:
+		raise ValueError("stage1_output is required and must be the return value of process_match_data")
+	
+	kitchen_df = stage1_output.get("kitchen_df")
+	if kitchen_df is None or (hasattr(kitchen_df, 'empty') and kitchen_df.empty):
+		print("⚠️ No kitchen data available, skipping visualization")
+		return {'visualizations_generated': False, 'reason': 'no_kitchen_data'}
+	
+	output_dir = job_dir / "graphics"
+	
+	if selected_player_index is not None:
+		try:
+			selected_player_id = int(selected_player_index)
+		except (TypeError, ValueError):
+			raise ValueError(f"Invalid selected_player_index: {selected_player_index}")
+		
+		print(f"🎯 Generating visualization only for player_{selected_player_id}")
+		render_player_kitchen(selected_player_id, kitchen_df, output_dir)
+	else:
+		# Generate for all players with data
+		player_ids = kitchen_df["player_id"].unique() if hasattr(kitchen_df, "unique") else set()
+		for player_id in sorted(player_ids):
+			render_player_kitchen(int(player_id), kitchen_df, output_dir)
+	
+	print(f"\n✅ Kitchen visualization generation complete!")
+	
+	return {
+		'visualizations_generated': True,
+		'selected_player_index': selected_player_index,
+		'output_dir': str(output_dir)
+	}
+
+
 if __name__ == "__main__":
-	for player_id in range(4):
-		render_player_kitchen(player_id)
+	raise RuntimeError(
+		"Direct CLI execution is not supported. "
+		"Use generate_kitchen_visualizations(..., stage1_output=process_match_data(...)) from the pipeline."
+	)
