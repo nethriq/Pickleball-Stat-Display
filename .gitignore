@@ -30,3 +30,8 @@ data/*.json
 data/
 data/delivery_staging/
 client_secret_575025686798-040ts7jqu5q331cnmtatuqu49q987753.apps.googleusercontent.com.json
+
+# Logs
+*.log
+logs/
+artifacts/

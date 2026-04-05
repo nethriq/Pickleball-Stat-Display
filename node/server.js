@@ -180,7 +180,8 @@ const pbvisionWebhookHandler = async (req, res) => {
         }));
 
         // 4. Hand off to Django
-        const djangoEndpoint = `http://localhost:8000/api/internal/jobs/${jobId}/save-results/`;
+        const djangoBaseUrl = process.env.DJANGO_BASE_URL || 'http://localhost:8000';
+        const djangoEndpoint = `${djangoBaseUrl}/api/internal/jobs/${jobId}/save-results/`;
 
         const djangoResponse = await fetch(djangoEndpoint, {
             method: 'POST',

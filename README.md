@@ -238,3 +238,41 @@ Required secrets:
 Optional secrets:
 - Google OAuth credentials (for Drive uploads)
 - Email credentials (for `python/email_dispatcher.py`)
+
+---
+
+## Safe Phase 2 Validation (Desktop-Safe)
+
+Use this flow to validate Phase 2 hardening without starting/stopping background services from scripts.
+
+### Why this is safe
+- The Phase 2 validator does **not** start services.
+- It does **not** stop services.
+- It sends **no kill signals**.
+- It only performs configuration and health checks.
+
+### Commands
+
+1. Activate the project environment:
+```bash
+cd /home/adi/Documents/Academics/Internships/nethriq
+pyenv activate project-venv
+```
+
+2. Run standard non-intrusive validation:
+```bash
+bash scripts/phase2/run_baseline_validation.sh
+```
+
+3. Run strict validation (fails if required env keys are not explicitly set):
+```bash
+bash scripts/phase2/run_baseline_validation.sh --strict
+```
+
+### Strict mode requires
+- `SECRET_KEY`
+- `DEBUG`
+- `ALLOWED_HOSTS`
+- `DJANGO_BASE_URL`
+
+Artifacts are written under `artifacts/phase2/<timestamp>/`.
