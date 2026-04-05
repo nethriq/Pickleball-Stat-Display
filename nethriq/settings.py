@@ -271,12 +271,17 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Celery Configuration (Message Queue & Async Tasks)
 # ============================================================================
 
+# Railway commonly provides REDIS_URL. Keep explicit CELERY_* vars highest priority.
+_default_redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+_celery_broker_override = os.getenv('CELERY_BROKER_URL')
+_celery_result_override = os.getenv('CELERY_RESULT_BACKEND')
+
 # Broker configuration: Redis
-CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_BROKER_URL = _celery_broker_override or _default_redis_url
 
 # Result backend: can use Redis or Django DB (django-celery-results)
 # Using Redis for speed; switch to 'django-db' if persistence needed across restarts
-CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = _celery_result_override or _default_redis_url
 
 # Task serialization (JSON is safe and standard)
 CELERY_ACCEPT_CONTENT = ['json']
